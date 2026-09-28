@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+data/
+tools/mt5sim/sim
+tools/mt5sim/ea_translated.cpp
+*.ex5
