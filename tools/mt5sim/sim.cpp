@@ -155,7 +155,11 @@ int main(int argc, char** argv) {
   Spec specs[] = {{"XAUUSD", 100, 0.01, 0.01, 0.01, 100, 2, 3.5, -0.055, -0.01},
                   {"US500", 1, 0.01, 0.01, 0.01, 10000, 2, 0.0, -0.07, -0.02},
                   {"NAS100", 1, 0.01, 0.01, 0.01, 10000, 2, 0.0, -0.07, -0.02},
-                  {"US30", 1, 0.01, 0.01, 0.01, 10000, 2, 0.0, -0.07, -0.02}};
+                  {"US30", 1, 0.01, 0.01, 0.01, 10000, 2, 0.0, -0.07, -0.02},
+                  // FX pairs: read only (Dollar Index filter), daily bars from official noon rates
+                  {"EURUSD", 100000, 0.00001, 0.01, 0.01, 100, 5, 0, 0, 0}, {"USDJPY", 100000, 0.001, 0.01, 0.01, 100, 3, 0, 0, 0},
+                  {"GBPUSD", 100000, 0.00001, 0.01, 0.01, 100, 5, 0, 0, 0}, {"USDCAD", 100000, 0.00001, 0.01, 0.01, 100, 5, 0, 0, 0},
+                  {"USDSEK", 100000, 0.00001, 0.01, 0.01, 100, 5, 0, 0, 0}, {"USDCHF", 100000, 0.00001, 0.01, 0.01, 100, 5, 0, 0, 0}};
   for (auto& sp : specs) {
     std::vector<Bar> b = load_bin(data + "/" + sp.name + ".bin");
     if (b.empty()) continue;
@@ -180,9 +184,10 @@ int main(int argc, char** argv) {
   std::map<std::string, size_t> nxt;
   for (auto& kv : RT.syms) nxt[kv.first] = 0;
   std::ofstream eqf(out + "/equity.csv");
-  eqf << "time,equity,balance,worst\n";
+  eqf << "time,equity,balance,worst,best\n";
   datetime last_eq_day = -1;
-  double worst_today = 1e300;
+  double prev_close = deposit;
+  double worst_today = 1e300, best_today = -1e300;
   for (datetime T : steps) {
     if (T > t_end) break;
     RT.now = T;
@@ -231,13 +236,15 @@ int main(int argc, char** argv) {
     }
     RT.peak_equity = std::max(RT.peak_equity, eq_close);
     RT.max_dd = std::max(RT.max_dd, (RT.peak_equity - eq_worst) / RT.peak_equity);
-    worst_today = std::min(worst_today, eq_worst);
     if (day != last_eq_day) {
-      if (last_eq_day >= 0) eqf << last_eq_day << "," << eq_close << "," << RT.balance << "," << worst_today << "\n";
-      last_eq_day = day; worst_today = 1e300;
+      if (last_eq_day >= 0) eqf << last_eq_day << "," << prev_close << "," << RT.balance << "," << worst_today << "," << best_today << "\n";
+      last_eq_day = day; worst_today = 1e300; best_today = -1e300;
     }
+    worst_today = std::min(worst_today, eq_worst);
+    best_today = std::max(best_today, eq_close);
+    prev_close = eq_close;
   }
-  eqf << last_eq_day << "," << rt_equity() << "," << RT.balance << "," << rt_equity() << "\n";
+  eqf << last_eq_day << "," << prev_close << "," << RT.balance << "," << worst_today << "," << best_today << "\n";
   OnDeinit(0);
   std::ofstream tf(out + "/trades.csv");
   tf << "ticket,symbol,magic,dir,volume,open,close,sl_dist,t_open,t_close,pnl,reason\n";

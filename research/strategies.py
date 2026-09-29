@@ -18,6 +18,7 @@ TF = {"M5": "5min", "M15": "15min", "M30": "30min", "H1": "1h", "H4": "4h", "D1"
 
 
 _TFC = {}
+XAUEUR_N = 200   # SMA period of the gold-in-euros confirmation filter
 
 
 def server_time(idx: pd.DatetimeIndex) -> pd.DatetimeIndex:
@@ -399,6 +400,16 @@ def trend_bo(bars, tf="H4", n_entry=20, filt="none", sl_atr=2.0, atr_n=20, exit_
             fs = np.sign(I.rsi(d1.close, 14) - 50)
         elif filt == "mom60":
             fs = np.sign(d1.close - d1.close.shift(60))
+        elif filt == "sma200_xaueur":
+            # gold trend must also hold in euros: XAUEUR = XAUUSD * (EUR per USD), vs its own SMA200
+            import ext
+            eur = ext.fx_close("Euro")
+            day = (d1.index + pd.Timedelta("1D")).normalize() - pd.Timedelta("1D")
+            fxv = eur.reindex(pd.DatetimeIndex(day), method="ffill").values
+            xe = pd.Series(d1.close.values * fxv, d1.index)
+            s1 = np.sign(d1.close - I.sma(d1.close, 200))
+            s2 = np.sign(xe - I.sma(xe, XAUEUR_N))
+            fs = s1.where(s1 == s2, 0)
         elif filt == "both":
             fs = np.sign(d1.close - I.sma(d1.close, 200)) * ((np.sign(d1.close - I.sma(d1.close, 200)) ==
                                                                 np.sign(I.rsi(d1.close, 14) - 50)))

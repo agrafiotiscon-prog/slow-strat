@@ -1,6 +1,6 @@
-# SlowStrat — MT5 portfolio Expert Advisor
+# SlowStrat v2 — MT5 portfolio Expert Advisor
 
-**Gold trend breakout + gold Asian‑range breakout + US‑index dip buyer, with risk‑based sizing, a drawdown brake, news filter and rollover/spread protection.**
+**Gold trend breakout + gold Asian‑range breakout + US‑index dip buyer with a US Dollar Index filter, plus risk‑based sizing, a drawdown brake, a news filter and rollover/spread protection.**
 
 `mql5/Experts/SlowStrat/SlowStrat.mq5` is the EA. Everything in `research/` and `tools/` is the evidence behind it and can be re‑run.
 
@@ -8,23 +8,40 @@
 >
 > The goal was **15–20 % per year with less than 6 % maximum drawdown**, taking mostly high‑probability trades, built for *today's* market.
 >
-> | | Annual return | Max drawdown |
+> | Default *Balanced* preset | Annual return | Max drawdown |
 > |---|---|---|
-> | **Today's market — Jan 2024 → Sep 2026** (never used to design or tune anything) | **+16.3 %/yr** | **5.4 %** |
-> | 2025 | +20.2 % | 5.4 % |
-> | 2026 to 25 Sep | +18.4 % (26.7 % annualised) | 3.9 % |
-> | **Full history — Jun 2007 → Sep 2026** | **+7.9 %/yr** | **11.7 %** |
+> | **Today's market — Jan 2024 → Sep 2026** (never used to design or tune anything) | **+16.1 %/yr** | **5.9 %** |
+> | 2025 | +19.6 % | 4.0 % |
+> | 2026 to 25 Sep | +14.7 % (21 % annualised) | 4.0 % |
+> | **Full history — Jun 2007 → Sep 2026** | **+7.1 %/yr** | **8.8 %** |
 >
-> Default *Balanced* preset, **actual EA code** run on historical data with spreads, commission, slippage and swaps (see [How it was tested](#how-it-was-tested)).
+> These figures come from running the **actual EA code** on historical data, with spreads, commission, slippage and swaps included (see [How it was tested](#how-it-was-tested)). Drawdown is measured from the intraday equity peak, the same way MT5 reports it.
 >
-> **In the current market regime the EA meets the target. Over the full 19 years it does not.** It had flat or losing stretches:
-> - **Losing years:** 2010–2012 and 2022, worst −5.8 %.
-> - **Worst drawdown:** 11.7 %, during 2022.
-> - **Longest time without a new equity high:** about 2.9 years (Nov 2021 → Oct 2024).
+> **In the current market regime the EA meets the target. Over the full 19 years it does not.** The weak stretches:
+> - **Losing years:** 2010, 2012 and 2022, the worst at −3.4 %.
+> - **Longest time without a new equity high:** about 3.5 years (Sep 2020 → Mar 2024).
 >
-> I tested many dozens of strategy families on gold, silver, 18 FX pairs and 5 stock indices. None of them delivers 15–20 % with under 6 % drawdown *robustly* across 20 years. Backtests that claim so are almost always overfitted, or use martingale/grid position sizing that eventually blows up. This EA does neither. **Nothing here is a guarantee — use a demo account first.**
+> Dozens of strategy families were tested on gold, silver, 18 FX pairs and 5 stock indices. None delivers 15–20 % with under 6 % drawdown *robustly* across 20 years. Backtests that claim so are almost always overfitted, or use martingale/grid position sizing that eventually blows up. This EA uses neither. **Nothing here is a guarantee. Use a demo account first.**
 
 ![Equity curves](results/equity_presets.png)
+
+### What changed in v2 (vs v1)
+
+v1 used price only. For v2 I tested **other tools and data**:
+- intermarket data: the US Dollar Index, VIX, oil, the S&P 500 trend, and gold priced in euros and yen;
+- gold tick volume;
+- 12 more indicators: MACD, Supertrend, Ichimoku, Keltner, Parabolic SAR, Stochastic, CCI, Bollinger %B and width, ADX, RSI and volume ratio;
+- a **machine‑learning trade filter**, trained walk‑forward.
+
+Most of these did **not** survive honest testing (details in [What did NOT work](#what-did-not-work-and-was-rejected)). One did, clearly and in every period: **index dips are only bought when the US Dollar Index is not strong.** A strong dollar usually means tighter financial conditions, so dips keep falling.
+
+| Default preset, same measurement | 2007–2026 | 2020–23 (worst regime) | 2024–26 |
+|---|---|---|---|
+| v1 Balanced | 7.9 %/yr, DD 11.8 % | 4.8 %/yr, DD 11.8 % | 16.3 %/yr, DD 6.2 % |
+| **v2 Balanced** | **7.1 %/yr, DD 8.8 %** | **6.5 %/yr, DD 8.8 %** | **16.1 %/yr, DD 5.9 %** |
+| v2 Growth (v1‑like risk) | 8.5 %/yr, DD 10.2 % | 7.6 %/yr, DD 10.2 % | 20.7 %/yr, DD 7.1 % |
+
+With v2, index‑dip trades win **76 %** of the time (v1: 70 %) and the average trade is **+0.27 R** (v1: +0.15 R).
 
 ---
 
@@ -43,231 +60,280 @@
 
 ## What the EA trades
 
-The EA runs three independent modules on one chart. Each module has its own magic number. The bars are MT5 broker bars (server time).
+The EA runs three independent modules from a single chart. Each module has its own magic number. The bars it uses are MT5 broker bars, in server time.
 
 | Module | Symbol | Timeframe | Win rate | Avg trade | Trades / yr | Role |
 |---|---|---|---|---|---|---|
 | **1. Gold trend breakout** | XAUUSD | H4 signals, M5 trailing | 33 % | **+0.49 R** | ~21 | Main profit engine; catches big gold trends. Few, large winners. |
-| **2. Gold Asian‑range breakout** | XAUUSD | M5 | **71 %** | +0.04 R | ~70 | High win‑rate, small edge. Strong in 2024‑26 (74 % win, +0.14 R). |
-| **3. US‑index dip buyer** | US500, NAS100, US30 | D1 | **71 %** | +0.15 R | ~14 (all 3) | High win‑rate, uncorrelated with gold (−0.1). |
+| **2. Gold Asian‑range breakout** | XAUUSD | M5 | **71 %** | +0.04 R | ~70 | High win rate, small edge. Strong in 2024‑26 (74 % win, +0.14 R). |
+| **3. US‑index dip buyer + USD filter** | US500, NAS100, US30 | D1 | **76 %** | **+0.27 R** | ~10 (all 3) | High win rate, uncorrelated with gold. |
 
-All three modules together win **63 %** of their trades. (R = the amount risked on the trade; +0.49 R means the average trade made 49 % of what it risked.)
+All three modules together win **63 %** of their trades. R is the amount risked on a trade; +0.49 R means the average trade made 49 % of what it risked.
 
 ### Module 1 — Gold H4 trend breakout
 - **Long:** the H4 close is above the highest high of the previous **80** H4 bars, **and** the last completed D1 close is above the **D1 SMA(200)**.
 - **Short:** the mirror image.
-- **Stop loss:** 1.0 × ATR(20, H4). No take‑profit.
-- **Trailing stop:** 3 R behind the best price since entry. It is updated on every completed M5 bar and only ever moves in the trade's favour.
-- One position at a time. A signal that arrives during the rollover window (16:30–18:30 New York time) is executed at 18:30 NY.
+- **Stop loss:** 1.0 × ATR(20, H4). There is no take‑profit.
+- **Trailing stop:** 3 R behind the best price since entry. It updates on every completed M5 bar and only moves in the trade's favour.
+- One position at a time. A signal that lands inside the rollover window (16:30–18:30 New York time) is executed at 18:30 NY.
 
 ### Module 2 — Gold Asian‑range breakout (the high win‑rate module)
-- **Asian range:** the high/low of 00:00–07:00 UTC.
-- **Entry window:** 07:00–12:00 UTC. The **first** M5 close outside the range, in the direction of yesterday's close versus the **daily EMA(50)**, triggers the entry. There is at most one trade per day.
-- The day is skipped if the range is smaller than 0.3 or larger than 2.0 × daily ATR(14).
-- **Stop loss:** 1.0 × daily ATR(14). **Take‑profit:** 1.0 × the Asian range. That combination (wide stop, small target) is what produces the ~71 % win rate.
-- Daily ATR and EMA use UTC days, which the EA builds itself from H1 data. This matches the research exactly (see the note in [Limitations](#limitations)).
+- **Range:** the Asian range is the high/low of 00:00–07:00 UTC.
+- **Entry window:** 07:00–12:00 UTC. The **first** M5 close outside the range triggers the trade, but only in the direction of yesterday's close relative to the **daily EMA(50)**. At most one trade per day.
+- **Skipped days:** the range must be between 0.3 and 2.0 × the daily ATR(14).
+- **Stop loss:** 1.0 × daily ATR(14). **Take‑profit:** 1.0 × the Asian range. The wide stop and small target give the ~71 % win rate.
 
-### Module 3 — US‑index daily dip buyer
-- **Buy** on the next session, after the daily rollover, when the completed D1 bar has:
-  - **RSI(2) < 10**,
-  - **IBS < 0.25**, where IBS (internal bar strength) = (close − low) / (high − low),
-  - **close > SMA(200)**.
+### Module 3 — US‑index daily dip buyer with a US Dollar Index filter
+- **Entry:** buy on the next session, after the daily rollover, when all of these hold on the completed D1 bar:
+  - **RSI(2) < 10**
+  - **IBS < 0.25**, where IBS (internal bar strength) = (close − low) / (high − low)
+  - **close > SMA(200)**
+  - **new in v2:** the **US Dollar Index is at most 1 % above its 200‑day average**
+- **How the EA builds the Dollar Index:** from your broker's EURUSD, USDJPY, GBPUSD, USDCAD, USDSEK and USDCHF daily closes, using the official ICE weights. It uses the previous day's closes, so there is no look‑ahead. If a pair is missing (USDSEK often is), it is left out.
 - **Exit:** at the first daily close above **SMA(5)**, or after 10 daily bars.
 - **Stop loss:** 2 × ATR(10, D1).
-- **Long only.** Each index is traded independently.
+- Long only. At most 3 index positions open at once.
 
 ### Portfolio‑level protection (all modules)
-- **Position sizing:** risk % of equity per trade, using `OrderCalcProfit`, so currency conversion is handled for any account currency. Commission is included in the sizing.
-- **Drawdown brake:** full size until the drawdown from the equity peak reaches 3 %. From there, size shrinks linearly to 50 % at an 8 % drawdown.
-- **Daily loss limit:** 3 %. No new entries for the rest of the server day.
-- **Hard stop:** at 20 % drawdown the EA closes everything and halts until you reset it.
-- **Open‑risk cap:** 5 % of equity across all open positions.
-- **Rollover block:** no entries 16:30–18:30 New York time, when spreads explode.
-- **Spread filter:** gold 4 bp, indices 3 bp of price.
-- **News filter:** uses the MT5 economic calendar (live only). No new entries from 30 min before to 20 min after high‑impact USD events.
-- All stops are **server‑side**, so a lost connection never leaves a position unprotected. Per‑position state survives restarts (stored in terminal global variables).
-- Two on‑chart displays:
-  - **Status panel:** equity, drawdown, brake level, open risk, server/UTC/NY clocks and the next three high‑impact news events.
-  - **Trade log:** `MQL5/Files/SlowStrat_log.csv`.
+- **Sizing:** each trade risks a fixed % of equity, calculated with `OrderCalcProfit` (works in any account currency). Commission is included.
+- **Drawdown brake:** full size until drawdown from the equity peak reaches 3 %, then size shrinks linearly to 50 % at 8 % drawdown.
+- **Daily loss limit:** 3 %; after that, no new entries until the next server day.
+- **Hard stop:** at 20 % drawdown the EA closes everything and halts.
+- **Open‑risk cap:** 6 % of equity across all open trades.
+- **Rollover block:** no entries 16:30–18:30 New York time.
+- **Spread filter:** gold 4 bp, indices 3 bp.
+- **News filter:** MT5 economic calendar, live only. New entries are blocked from 30 min before to 20 min after high‑impact USD events.
+- **Stops are server‑side**, and state survives restarts.
+- **On‑chart panel:** equity, drawdown, brake level, open risk, clocks, the next high‑impact news and the Dollar Index status.
+- **Trade log:** written to `MQL5/Files/SlowStrat_log.csv`.
 
 ---
 
 ## Results
 
-Results come from the **actual EA source code** run on historical data through an MT5 emulator (details in [How it was tested](#how-it-was-tested)). Setup:
-- **Start and period:** $10,000 start, Jun 2007 → 25 Sep 2026.
-- **Costs:**
-  - **Gold:** spread ≈ 0.8 bp of price with a $0.25 floor ($0.32 at $4,000), 5 × wider around rollover; commission $7 per lot round trip; slippage $0.08 per fill.
-  - **Indices:** spread 0.7–1 bp; slippage 0.3 bp.
-  - **Swaps (annual, on position value):** gold long −5.5 %, short −1 %; indices long −7 %, short −2 %.
-- **Fills:** a stop that gaps fills at the (worse) open. If a stop and a target are both touched in the same bar, the stop is assumed to hit first.
+Setup for these runs:
+- **Code and period:** actual EA code, $10,000 start, Jun 2007 → 25 Sep 2026.
+- **Gold costs:** spread ≈ 0.8 bp of price with a $0.25 floor ($0.32 at $4,000), 5 × wider around rollover; commission $7 per lot round trip; slippage $0.08 per fill.
+- **Index costs:** spread 0.7–1 bp, slippage 0.3 bp.
+- **Swaps** (annual rate on position value): gold long −5.5 %, short −1 %; indices long −7 %, short −2 %.
+- **Fills:** a gapped stop fills at the worse open. When stop and target are touched in the same bar, the stop is assumed to hit first.
+- **Drawdown:** measured from the intraday equity peak.
 
-**CAGR / maximum drawdown by period and preset.** Drawdown is the worst intraday point measured from the equity peak.
+**CAGR / maximum drawdown by period and preset:**
 
-| Period | Conservative | **Balanced (default)** | Aggressive |
-|---|---|---|---|
-| 2008–2011 | 1.3 % / 3.5 % | 1.2 % / 7.2 % | 0.9 % / 9.7 % |
-| 2012–2015 | 5.0 % / 3.1 % | 8.8 % / 5.8 % | 12.0 % / 8.5 % |
-| 2016–2019 | 5.4 % / 3.8 % | 10.0 % / 6.7 % | 12.5 % / 8.8 % |
-| 2020–2023 | 2.8 % / 7.5 % | 4.8 % / 11.7 % | 5.8 % / 15.6 % |
-| **2024 → Sep 2026 (holdout)** | **7.0 % / 3.0 %** | **16.3 % / 5.4 %** | **23.5 % / 6.9 %** |
-| 2025 | 8.0 % / 3.0 % | 20.2 % / 5.4 % | 26.5 % / 6.9 % |
-| 2026 YTD (annualised) | 8.9 % / 1.4 % | 26.7 % / 3.9 % | 41.1 % / 5.7 % |
-| **Full 2007–2026** | **4.3 % / 7.5 %** | **7.9 % / 11.7 %** | **10.4 % / 15.7 %** |
-| $10k grew to | $22,415 | $43,444 | $67,214 |
+| Period | Conservative | **Balanced (default)** | Growth | Aggressive |
+|---|---|---|---|---|
+| 2008–2011 | 1.3 % / 3.8 % | 1.2 % / 6.6 % | 1.1 % / 7.7 % | 0.8 % / 10.3 % |
+| 2012–2015 | 4.4 % / 3.4 % | 6.0 % / 5.7 % | 7.0 % / 6.7 % | 9.6 % / 9.9 % |
+| 2016–2019 | 5.1 % / 5.2 % | 7.8 % / 7.4 % | 9.2 % / 8.7 % | 12.1 % / 11.9 % |
+| 2020–2023 | 4.4 % / 6.3 % | 6.5 % / 8.8 % | 7.6 % / 10.2 % | 9.6 % / 12.8 % |
+| **2024 → Sep 2026 (holdout)** | **8.5 % / 3.8 %** | **16.1 % / 5.9 %** | **20.7 % / 7.1 %** | **27.2 % / 9.6 %** |
+| 2025 | 9.6 % / 2.2 % | 19.7 % / 4.0 % | 25.9 % / 4.9 % | 35.9 % / 6.9 % |
+| 2026 YTD (annualised) | 10.3 % / 2.2 % | 21.0 % / 4.0 % | 29.5 % / 5.0 % | 41.1 % / 6.0 % |
+| **Full 2007–2026** | **4.6 % / 6.3 %** | **7.1 % / 8.8 %** | **8.5 % / 10.2 %** | **11.0 % / 12.8 %** |
+| $10k grew to | $23,980 | $37,594 | $48,330 | $75,777 |
 
-Risk per trade for each preset:
+**Risk per trade by preset:**
 
 | Preset | Gold trend | Gold Asia | Each index |
 |---|---|---|---|
-| Conservative | 0.30 % | 0.25 % | 0.50 % |
-| Balanced | 0.60 % | 0.50 % | 1.00 % |
-| Aggressive | 0.90 % | 0.75 % | 1.50 % |
+| Conservative | 0.30 % | 0.25 % | 0.75 % |
+| Balanced | 0.48 % | 0.40 % | 1.20 % |
+| Growth | 0.60 % | 0.50 % | 1.50 % |
+| Aggressive | 0.90 % | 0.75 % | 2.25 % |
 
 Index data only starts in May 2013, so 2007–2012 is gold‑only.
 
-![Yearly returns](results/yearly_balanced.png)
+**Balanced, calendar years:**
+
+| Year | Return | Year | Return | Year | Return | Year | Return |
+|---|---|---|---|---|---|---|---|
+| 2007 (Jun–Dec) | +6.3 % | 2012 | −2.3 % | 2017 | +9.2 % | 2022 | −3.4 % |
+| 2008 | +4.2 % | 2013 | +15.6 % | 2018 | +4.1 % | 2023 | +5.9 % |
+| 2009 | +4.4 % | 2014 | +7.3 % | 2019 | +8.9 % | 2024 | +9.7 % |
+| 2010 | −2.8 % | 2015 | +4.1 % | 2020 | +23.6 % | 2025 | +19.6 % |
+| 2011 | +0.4 % | 2016 | +9.0 % | 2021 | +2.8 % | 2026 (to Sep 25) | +14.7 % |
+
 ![Drawdown](results/drawdown_balanced.png)
 
-**What to expect over the next 12 months (Balanced).** These come from a block‑bootstrap Monte Carlo of the EA's monthly returns, 20,000 paths:
+**What to expect over the next 12 months (Balanced).** Block‑bootstrap Monte Carlo of the EA's monthly returns, 40,000 paths:
 
-| If the market behaves like… | Median 12‑m return | 5 % worst case | Chance of a losing year | Chance of ≥ 15 % |
-|---|---|---|---|---|
-| 2024–2026 | +16.8 % | +3.2 % | 1.2 % | 56 % |
-| the whole 2007–2026 history | +7.2 % | −3.3 % | 14.7 % | 20 % |
+| If the market behaves like… | Median 12‑m return | 5 % worst case | Chance of a losing year | Chance of ≥ 10 % | Chance of ≥ 15 % |
+|---|---|---|---|---|---|
+| 2024–2026 | +16.9 % | +4.0 % | 1 % | 78 % | 58 % |
+| the whole 2007–2026 history | +6.4 % | −2.6 % | 14 % | 32 % | 16 % |
 
-Across the real 2007–2026 path, rolling 12‑month returns ranged from −9.1 % to +37.7 % (median +6.5 %), and 81 % of them were positive.
+Growth has better odds of reaching 10 %: 85 % if the market is like 2024–26 and 39 % if it is like the long history. The cost is more drawdown.
 
-Full per‑period tables, yearly returns and every simulated trade are in [`results/ea_simulation/`](results/ea_simulation/).
+Full per‑period tables and every simulated trade for each preset are in [`results/ea_simulation/`](results/ea_simulation/).
 
 ---
 
 ## How it was tested
 
-1. **Data (all public).** The usual market‑data sites were blocked from the build environment, so everything was assembled from public GitHub datasets (sources in [`research/fetch_data.sh`](research/fetch_data.sh)):
-   - **XAUUSD M5 2004 → 27 Sep 2026:** Dukascopy from 2020, an OctaFX MT4 feed before that. The feeds were cross‑checked and time‑aligned (correlation 0.99+).
-   - **H1 bars for 18 FX pairs, 5 indices and silver:** 2007/2013 → Sep 2023.
-   - **Recent data:** M1 samples for Mar → Sep 2026, and index daily bars for May 2024 → Sep 2026.
-2. **A realistic Python backtest engine** ([`research/engine.py`](research/engine.py)):
-   - M5 execution with bid/ask spreads, extra spread at rollover, commission, slippage and swaps, including triple Wednesday swaps.
-   - Gap fills at the open, and "stop hits first" when a bar touches both stop and target.
-   - Worst‑intraday mark‑to‑market drawdown.
-   - Broker‑style H4/D1 bars on New‑York‑close server time.
-   - Signals only from completed bars, so there is no look‑ahead.
-3. **Development versus holdout.** Strategy families and parameters were chosen on **2012–2023**, which covers bear, flat and choppy gold markets. They had to be positive in each of 2012‑15, 2016‑19 and 2020‑23, not just on average. **Jan 2024 → Sep 2026 was never used for any decision.** The one exception is the Asia module: it was kept after I saw it was fragile, and it runs at small risk.
-4. **Robustness checks on the actual EA.** Every check below ran the real EA code in the emulator:
-   - **Parameter sensitivity:** 23 variants, each nudging one parameter by ±20–25 % (channel 60/100, stop 0.8/1.25 ATR, trail 2.5/3.5 R, SMA 150/250, RSI 7/15, IBS 0.2/0.3, …). All land at **6.7–8.3 %/yr with 10–13 % DD over the full history, and 13.7–18.6 %/yr with 4.5–6.1 % DD in 2024‑26.** That is a plateau, not a lucky peak.
-   - **Costs:** doubled spreads → 14.0 %/yr (DD 5.7 %) in 2024‑26 and 4.6 %/yr over the full history. Tripled slippage → 14.7 %/yr (DD 5.9 %) in 2024‑26. Both together → 11.3 %/yr (DD 4.8 %) in 2024‑26.
-   - **Broker time zone:** on a plain GMT+0 server (different daily and H4 bars) it still earns 16.5 %/yr with 5.0 % DD in 2024‑26, but only 5.7 %/yr over the full history. New‑York‑close brokers (GMT+2 winter / GMT+3 summer) are recommended.
-   - **Account size:** below about $5,000, the 0.01‑lot minimum on gold makes the EA skip trades. $2,500 still works at reduced frequency; $1,000 mostly does not.
-   - **Crashes and gaps:**
-     - The worst single trade was **−1.47 R**, a weekend gap. Only 5 of 2,023 trades lost more than 1.2 R.
-     - The worst day was −3.0 %.
-     - The 2008 crisis, the April 2013 gold crash, the March 2020 COVID crash, the 2022 rate shock and the 2025‑26 gold spike are all inside the test.
-   - **Losing streaks:** 9 in a row for gold trend, 6 for gold Asia, 7 for index dips.
-5. **EA‑versus‑research parity check.** No MT5 terminal could be downloaded here, so I wrote an MT5 emulator ([`tools/mt5sim`](tools/mt5sim)):
-   - [`mql2cpp.py`](tools/mt5sim/mql2cpp.py) mechanically translates `SlowStrat.mq5` to C++.
-   - [`mql5rt.h`](tools/mt5sim/mql5rt.h) is a runtime that implements the MQL5 API used by the EA.
-   - The translated EA **compiles with zero errors and zero warnings under `g++ -Wall`**.
-   - Run over 2007–2026, the EA reproduces the research trades:
+1. **Data (all public).** The usual market‑data sites were blocked from the build environment, so everything came from public GitHub datasets ([`research/fetch_data.sh`](research/fetch_data.sh)):
+   - XAUUSD M5 2004 → 27 Sep 2026;
+   - FX, index and silver H1 bars for 2007/2013 → Sep 2023;
+   - recent M1/daily samples to Sep 2026;
+   - **new in v2:** official daily FX rates (Federal Reserve H.10, used to rebuild the Dollar Index, which matches the real index: 114 in Sep 2022, 71 in Mar 2008), VIX daily 1990–2026, and WTI and Brent daily.
+2. **Realistic Python engine** ([`research/engine.py`](research/engine.py)):
+   - M5 execution with bid/ask spreads, rollover spread spikes, commission, slippage and swaps;
+   - gap fills and the stop‑first rule;
+   - broker‑style H4/D1 bars;
+   - no look‑ahead.
+3. **Development versus holdout.** Everything was chosen on **2012–2023**, and a rule had to be positive in *each* of 2012‑15, 2016‑19 and 2020‑23. **Jan 2024 → Sep 2026 was never used for any decision.**
+   - v2's intermarket candidates additionally had to hold up in 2024‑26.
+   - They also had to show a plateau (nearby settings working too) and have an economic reason to work.
+4. **Robustness checks on the actual v2 EA (Balanced).** Full list in [`results/ea_simulation/balanced_stress_and_sensitivity.txt`](results/ea_simulation/balanced_stress_and_sensitivity.txt).
+   - **Parameter sensitivity**, 23 variants (each gold, Asia, index and Dollar Index parameter nudged ±20–25 %). All land at:
 
-     | Module | Research trades matched | Same direction | Same exit | R correlation |
-     |---|---|---|---|---|
-     | Gold trend | 397 of 398 | 100 % | 99.7 % | 0.994 |
-     | Gold Asia | 1,361 of 1,362 | 100 % | 100 % | 1.000 |
-     | Index dips | all | 100 % | 96–100 % | 0.994–0.999 |
+     | Period | Return | Max drawdown |
+     |---|---|---|
+     | 2007–2026 | 6.4–8.0 %/yr | 8.2–10.0 % |
+     | 2024‑26 | 13.8–16.9 %/yr | 4.7–6.9 % |
 
-   - The few extra EA trades come from indicator warm‑up that the research skipped conservatively.
+   - **Costs:**
+
+     | Stress | 2024‑26 | 2007–2026 |
+     |---|---|---|
+     | Double spreads | 13.8 %/yr | 4.2 %/yr |
+     | Triple slippage | 15.4 %/yr | 6.3 %/yr |
+     | Both | 10.7 %/yr (DD 5.6 %) | 3.3 %/yr |
+
+   - **Broker time zone:** a GMT+0 server gives 16.9 %/yr in 2024‑26 but 5.3 %/yr over 2007–2026. New‑York‑close (GMT+2/+3) brokers are recommended.
+   - **Account size:** $10k gives the results above. At $5k, 2024‑26 drops to 13.5 %/yr; at $2.5k, 10.6 %/yr. The 0.01‑lot minimum on gold makes the EA skip or undersize trades on small accounts.
+   - **Worst cases:**
+     - worst single trade −1.48 R (a weekend gap); only 5 of 1,884 trades lost more than 1.2 R;
+     - worst day −3.45 %;
+     - longest losing streaks: gold trend 9, gold Asia 6, index dips 4.
+5. **EA‑versus‑research parity check** ([`tools/mt5sim`](tools/mt5sim)). No MT5 terminal could be downloaded here, so:
+   - the EA's source is mechanically translated to C++ and runs against an MT5 API emulator;
+   - it **compiles with zero errors and zero warnings under `g++ -Wall`**;
+   - over 2007–2026 it reproduces the research trade‑for‑trade:
+
+     | Module | Research trades matched | Correlation of R results |
+     |---|---|---|
+     | Gold trend | 397 of 398 | 0.994 |
+     | Gold Asia | 1,361 of 1,362 | 1.000 |
+     | USD‑filtered index dips | 97–100 % | 0.993–0.997 |
+
+---
 
 ## What did NOT work (and was rejected)
-- **Short‑term mean reversion on gold** (RSI‑2 dips on M15/H1/H4, Bollinger fades, previous‑day‑high/low sweep reversals): no edge after costs. Costs are about 0.1 R per trade on H1.
-- **Trend following on FX, silver and non‑US indices:** negative in 2016–2023 in almost every configuration.
-- **Mean reversion on FX crosses** (EURGBP, AUDCAD, …): the best was only about +0.03 R per trade.
-- **The "gold rises every night" effect:** it is a *data artefact*. Bid prices dip when spreads widen at 17:00 NY and recover at the reopen. It is not tradeable.
-- **Pyramiding, partial take‑profit, and ADX / efficiency / volatility‑compression filters on the gold breakout:** each one made the robust results worse.
-- **Martingale, grid and averaging down:** deliberately not used. They produce beautiful backtests and eventually wipe out accounts.
+
+**New in v2 — other tools and data:**
+
+| Tried | Result |
+|---|---|
+| **Machine‑learning trade filter** (gradient boosting and logistic regression on ~80 features, trained walk‑forward) | Out‑of‑sample AUC 0.42–0.55, i.e. no better than a coin flip. Taking only its "confident" trades *reduced* profits in most years. Rejected: a black box that looks clever is not an edge. |
+| **VIX‑spike dip buying** (Connors‑style "VIX stretch") | +0.09…+0.23 R in 2013–23 but flat (+0.00 R) in 2024–26. A broker‑available volatility proxy lost money. Rejected. |
+| **Gold also trending in EUR/JPY** (XAUEUR/XAUJPY confirmation) | It looked good trade‑by‑trade. In the full engine it lowered gold returns, and whether it reduced drawdown depended on the setting (SMA 100/150 vs 250). Not a plateau. Rejected. |
+| **MACD, RSI, Keltner, Stochastic, CCI, Supertrend, Ichimoku, Parabolic SAR, Bollinger** as confirmation filters | 4‑hour MACD, RSI and Keltner "confirmations" helped in 2012–23 and then flipped sign in 2024–26. The rest never helped consistently. Rejected. |
+| **Tick volume, volatility regime, oil trend, S&P 500 trend** as gold filters | Each helped some eras and hurt others, and all cut total profit. Rejected. |
+| **Dollar Index moves as a filter for the Asia breakout** | Strong in 2012–23, no benefit in 2024–26, and no economic logic. Rejected as data‑mining. |
+| **Treasury yields, silver, COT positioning** | Couldn't be validated: no data for 2024–26 or not available here. Most MT5 brokers don't offer yields anyway. |
+
+**From v1 research:**
+- **Short‑term mean reversion on gold** (RSI‑2 dips, Bollinger fades, previous‑day high/low sweep reversals): no edge after costs.
+- **Trend following on FX, silver and non‑US indices:** negative in 2016–2023.
+- **FX‑cross mean reversion:** about +0.03 R, too small to trade.
+- **The "gold rises every night" effect:** a data artefact caused by rollover spreads.
+- **Pyramiding, partial take‑profit, and ADX / efficiency / compression filters:** each made results worse.
+- **Martingale, grid and averaging down:** deliberately not used.
 
 ---
 
 ## Installation and settings
 
-1. **Copy the EA.** Put `mql5/Experts/SlowStrat/SlowStrat.mq5` into your terminal's `MQL5/Experts/SlowStrat/` folder (File → Open Data Folder).
-2. **Compile it.** Open it in MetaEditor and press F7.
-3. **Attach it** to **any one chart**, for example XAUUSD M5. It trades all its symbols from that one chart. Turn on *Algo Trading*.
-4. **Account.** Use a **hedging** account; the two gold modules need separate positions. On a netting account they share one XAUUSD slot.
-5. **Symbols.** The EA auto‑detects `XAUUSD`/`GOLD` and `US500`/`SPX500`/`US500Cash`, `NAS100`/`USTEC`/`US100`, `US30`/`DJ30`/`WS30`, including suffixes such as `.r` or `m`. If your broker uses other names, set `InpGoldSymbol` and `InpIndexSymbols` (for example `US500.cash,USTEC.cash,US30.cash`). Show them in Market Watch.
-6. **Broker time.** Leave `InpServerGMTOffsetWinter = 2` and `InpServerUsesUSDST = true` for most brokers (GMT+2/+3). In live trading the offset is detected automatically. In the **Strategy Tester** it must be set correctly for your broker's server.
-7. **Commission.** Set `InpGoldCommissionPerLot` to your broker's gold round‑trip commission per lot (the default is 7.0). On a raw‑spread account with $3 per side, enter 6.0. On a commission‑free account, enter 0.
-8. **VPS.** Run the EA 24/5 on a VPS close to your broker's server.
+1. **Copy** `mql5/Experts/SlowStrat/SlowStrat.mq5` into your terminal's `MQL5/Experts/SlowStrat/` folder (File → Open Data Folder).
+2. **Compile** it in MetaEditor (F7).
+3. **Attach** it to **one chart**, for example XAUUSD M5, and enable *Algo Trading*.
+4. **Use a hedging account.**
+5. **Put the symbols in Market Watch:**
+   - XAUUSD (or GOLD);
+   - US500/SPX500, NAS100/USTEC, US30/DJ30;
+   - **EURUSD, USDJPY, GBPUSD, USDCAD, USDCHF (and USDSEK if available)** for the Dollar Index filter.
+   
+   Suffixes such as `.r` or `m` are auto‑detected. If your broker uses other names, set `InpGoldSymbol`, `InpIndexSymbols` and `InpDXYSymbols`.
+6. **Broker time:** `InpServerGMTOffsetWinter = 2` and `InpServerUsesUSDST = true` suit most brokers (GMT+2/+3). The EA auto‑detects this live, but it must be set correctly in the **Strategy Tester**.
+7. **Commission:** set `InpGoldCommissionPerLot` to your broker's gold round‑trip commission per lot (default 7.0).
+8. **VPS:** run it 24/5 on a VPS near your broker's server.
 
 | Key input | Default | Meaning |
 |---|---|---|
-| `InpPreset` | Balanced | Conservative / Balanced / Aggressive / Custom |
-| `InpRiskMultiplier` | 1.0 | Scales every module's risk. For example, Balanced × 0.5 ≈ Conservative. |
+| `InpPreset` | Balanced | Conservative / Balanced / Growth / Aggressive / Custom |
+| `InpRiskMultiplier` | 1.0 | Scales every module's risk |
+| `InpID_DXYFilter` | true | Dollar Index filter for index dips |
+| `InpID_DXYMaxAboveSMA` / `InpID_DXYSMA` | 1.0 % / 200 | Filter threshold / averaging period |
+| `InpID_MaxConcurrent` | 3 | Max index positions open at once |
 | `InpDDBrake*` | 3 % → 8 %, floor 0.5 | Risk reduction while in drawdown |
 | `InpDailyLossLimitPct` | 3 | Pause new entries for the day |
-| `InpHardStopDDPct` | 20 | Close all positions and halt. Resume with `InpResetPeakOnStart=true`. |
-| `InpMaxOpenRiskPct` | 5 | Cap on the sum of initial risk across open trades |
+| `InpHardStopDDPct` | 20 | Close all and halt; resume with `InpResetPeakOnStart=true` |
+| `InpMaxOpenRiskPct` | 6 | Cap on the sum of initial risk across open trades |
 | `InpNewsBeforeMin` / `After` | 30 / 20 | High‑impact news blackout for new entries |
-| `InpGoldTrendEnable` / `InpGoldAsiaEnable` / `InpIndexEnable` | true | Switch modules on or off |
 
 **Choosing a preset:**
-- **Your target (≈15–20 %/yr, <6 % DD in the current market):** Balanced.
-- **Drawdown that stayed under 6 % in almost every period:** Conservative. It has lower returns, about 4–9 %/yr.
-- **Aggressive:** roughly doubles returns in strong regimes, and drawdowns reached 15.7 % historically.
 
-**Minimum balance:** about **$5,000**. Also check your broker's minimum lot size for indices: if it is 0.1 lot at $1/point, you need more.
+| Preset | Pick it if… | What it gave |
+|---|---|---|
+| **Balanced** (default) | You want roughly 15–20 %/yr with drawdown around or under 6 % in today's market. | 16.1 %/yr, DD 5.9 % in 2024‑26. |
+| **Growth** | You care most about the chance of +10 % in a year. | 85 % odds if next year is like 2024‑26, 39 % if it is like the long history. Drawdown 7.1 % recently, 10.2 % historically. |
+| **Conservative** | You want drawdown that stayed around 6 % across all 19 years. | About 4–10 %/yr. |
+| **Aggressive** | You accept much bigger swings. | Drawdowns up to 12.8 %. |
+
+**Minimum balance:** about **$10,000** for full results; $5,000 works with somewhat lower returns. Check your broker's minimum lot for indices: at 0.1 lot × $1/point you may need more.
 
 ---
 
 ## Important factors and risk notices
 
-- **Regime dependence (the biggest risk).** Most of the profit comes from gold trends.
-  - When gold trends, as in 2013 (down), 2019‑20 and 2024‑26, the EA does well.
-  - When gold chops sideways for years, as in 2010‑12 and 2021‑23, it goes flat or loses up to ~12 % (Balanced) and can take **2–3 years** to recover.
-  - The index dips help, but they cannot fully offset a bad gold regime.
-- **High‑impact news.** The MT5 calendar filter blocks new entries around USD events: NFP, CPI, FOMC, GDP, retail sales, PCE, ISM.
-  - It is **live‑only**. The MT5 Strategy Tester has no calendar, so tester results do not include it.
-  - The strategy's entry times (H4 bar closes and 07:00–12:00 UTC) rarely coincide with releases, so the effect is small.
-  - Open positions are *not* closed before news. Their stops are server‑side, and a news spike can still gap through a stop (worst case in 19 years: −1.47 R).
-  - Consider switching the EA off for truly exceptional events such as elections or central‑bank emergency meetings.
-- **Rollover (17:00 New York).** Spreads widen 5–20× for about an hour. The EA never *opens* trades 16:30–18:30 NY, but an existing stop can be hit by the spread spike. Choose a broker with sane rollover spreads.
-- **Weekend gaps.** Gold and index positions are held over weekends, because the trend module needs to. A Monday gap past the stop fills at the gap price.
-- **Swaps.** Gold longs pay about 5–6 %/yr and index longs about 7 %/yr of position value per night held. These costs are included in the results. Swap‑free (Islamic) accounts with admin fees change the numbers.
-- **Broker differences.** Spreads, commissions, contract sizes, minimum lots, server time zone and data feed all differ between brokers. Results *will* differ from these tests; always run your own tester check (see below).
-- **Leverage and margin.** At the default settings gross exposure is modest: a median of 0.3× equity while in trades, 1.6× at the 95th percentile and 3.8× at the historical peak (several modules in trades at once). Leverage of 1:20 or more is plenty.
-- **Prop‑firm rules.** The daily loss limit (3 %) and the brake are compatible with typical 5 %‑daily / 10 %‑total rules, but check the firm's rules on news trading and weekend holding.
-- **Correlation.** The three index dips often trigger on the same day (correlation 0.3–0.7). That is why each is sized independently and the open‑risk cap exists.
-- **Past performance does not guarantee future results.** Even out‑of‑sample, 2024‑26 is only 2.7 years, and it was an exceptional gold bull market.
+- **Regime dependence — the biggest risk.** Most of the profit comes from gold trends.
+  - In trending years (2013 down, 2019‑20, 2024‑26) the EA does well.
+  - In sideways years (2010‑12, 2021‑23) it goes flat or loses up to about 9 % (Balanced) and can take **2–3.5 years** to recover.
+  - The USD‑filtered index dips soften this but cannot remove it.
+- **Correlated index positions.** US500, NAS100 and US30 often dip on the same day, so up to three positions of 1.2 % risk can open together. The worst day in the test was −3.45 %. Setting `InpID_MaxConcurrent = 2` lowers that risk at a small cost in return.
+- **The Dollar Index comes from your broker's FX quotes.** If FX history is short (under ~210 daily bars), the filter stays off until there is enough. The on‑chart panel shows its status.
+- **High‑impact news.** The MT5 calendar filter (live only, not in the Strategy Tester) blocks new entries around USD events: NFP, CPI, FOMC, GDP, retail sales, PCE and ISM.
+  - Open positions are not closed before news; their stops are server‑side.
+  - A news spike can still gap through a stop. The worst case in 19 years was −1.48 R.
+- **Rollover (17:00 New York).** Spreads widen 5–20×. The EA never *opens* trades 16:30–18:30 NY, but an existing stop can be hit by the spread spike.
+- **Weekend gaps.** Positions are held over weekends, because the trend module needs to be. A gap past the stop fills at the gap price.
+- **Swaps.** Gold longs pay about 5–6 %/yr and index longs about 7 %/yr of position value while held. These costs are included in the results.
+- **Broker differences.** Spreads, commission, contract sizes, minimum lots, server time zone and the data feed all change results. Run your own tester check.
+- **Leverage.** While in trades, gross exposure was typically about 0.5 × equity (95th percentile 1.4 ×), peaking at 4 × when several modules were open at once. Leverage of 1:20 or more is enough.
+- **Prop‑firm rules.** The 3 % daily limit and the brake fit typical 5 %/10 % rules. Check the firm's rules on news trading and weekend holding.
+- **Past performance does not guarantee future results.** 2024‑26 is only 2.7 years, and it was an exceptional gold bull market.
 
 ---
 
 ## Verify it yourself in the MT5 Strategy Tester
-1. Open the Strategy Tester (Ctrl+R) and pick Expert `SlowStrat\SlowStrat`.
-2. Choose XAUUSD, any timeframe (M5 is fine), **"1 minute OHLC"** or **"Every tick based on real ticks"**.
-3. Set the dates, for example 2015‑01‑01 → today, and a $10,000 deposit.
-4. Make sure your broker provides history for XAUUSD **and** your index symbols. The tester downloads the other symbols automatically when the EA requests them.
-5. Set `InpServerGMTOffsetWinter` / `InpServerUsesUSDST` for your broker's server.
-6. Compare with the tables above for the same years. Expect differences from your broker's spreads and data, but the same general shape.
-7. `OnTester()` returns return ÷ max drawdown, so "Custom max" optimisation works. Don't over‑optimise: the defaults were deliberately chosen from the middle of a plateau.
+1. Open the Strategy Tester (Ctrl+R) and choose `SlowStrat\SlowStrat`, XAUUSD, **"1 minute OHLC"** or **"Every tick based on real ticks"**, a date range such as 2015 → today, and a $10,000 deposit.
+2. Make sure your broker provides history for XAUUSD, your index symbols **and the FX pairs**. The tester downloads them when the EA requests them.
+3. Set `InpServerGMTOffsetWinter` / `InpServerUsesUSDST` for your broker's server.
+4. Compare with the tables above for the same years. Expect differences from spreads and data, but the same general shape.
+5. `OnTester()` returns return ÷ max drawdown, so "Custom max" optimisation works. Don't over‑optimise: the defaults sit in the middle of a plateau.
 
 ## Reproduce the research
 ```bash
-pip install numba pandas numpy pyarrow scipy matplotlib
+pip install numba pandas numpy pyarrow scipy matplotlib scikit-learn
 bash research/fetch_data.sh                 # public data -> /home/user/data_repos (set DATA_REPOS to change)
 cd research
 python3 run_gold_trend.py                    # gold breakout parameter sweep (dev vs holdout)
-python3 final_portfolio.py && python3 stress.py   # portfolio, cost stress, drawdown brake, Monte Carlo
+python3 final_portfolio.py && python3 stress.py   # v1 portfolio, cost stress, drawdown brake, Monte Carlo
+python3 feat_scan.py && python3 filter_test.py    # v2: indicator + intermarket feature scan and filter tests
+python3 ml_meta.py && python3 vix_strat.py        # v2: walk-forward ML filter, VIX-stretch module (both rejected)
+python3 intermarket/dxy_filter_plateau.py         # v2: Dollar-Index filter plateau (accepted)
 cd ../tools/mt5sim
 ./run_ea_backtest.sh                         # translate + compile + run the ACTUAL EA over 2007-2026
 ./run_ea_backtest.sh InpPreset=2 --spread_mult=2   # any input / stress
-python3 parity.py /tmp/ea_run                # EA-vs-research trade parity (needs final_portfolio.py run first)
+./sens_v2.sh                                 # full stress + sensitivity battery
 ```
 
 ## Limitations
-- **The EA has not been run inside MetaTrader 5 itself.** The build environment could not reach mql5.com. Its logic was compiled and executed through a faithful C++ translation and emulator, and it matched the research trade‑for‑trade. **Still compile it in MetaEditor and run the Strategy Tester on your broker before going live.**
-- **Data gaps:** FX and index intraday data are missing from Sep 2023 to Mar 2026 (index daily data exists from May 2024). Index history starts in 2013. Gold data is complete from 2004 to 27 Sep 2026.
-- **Price data is bid‑only** (Dukascopy/OctaFX). Spreads are modelled, not observed.
-- **The Asia module is regime‑dependent.** Its long‑run edge is small (+0.04 R), it was strong in 2024‑26 (+0.14 R), and it weakens if daily bars are cut at broker midnight instead of UTC midnight. That is why it runs at a small risk and can be disabled (`InpGoldAsiaEnable=false`). Without it, Balanced makes 11.1 %/yr (DD 4.8 %) in 2024‑26 and 6.8 %/yr (DD 12.1 %) over the full history, against 16.3 % / 5.4 % and 7.9 % / 11.7 % with it.
+- **Not yet run inside MetaTrader 5 itself.** The build environment could not reach mql5.com. The logic was compiled and executed through a faithful C++ translation and MT5 emulator, and it matched the research trade‑for‑trade. **Compile it in MetaEditor and run the Strategy Tester on your broker before going live.**
+- **FX data in the emulator.** The Dollar Index there is built from official daily noon rates. The live EA uses your broker's daily closes, so a few days sitting right at the 1 % threshold can come out differently.
+- **Data gaps.** FX and index intraday data are missing from Sep 2023 to Mar 2026 (index daily data exists from May 2024), and index history starts in 2013. Gold is complete from 2004 to 27 Sep 2026.
+- **Bid‑only prices.** The price data are bid only; spreads are modelled, not observed.
+- **The Asia module is regime‑dependent.** Its long‑run edge is small (+0.04 R), while 2024‑26 was strong (+0.14 R). You can disable it with `InpGoldAsiaEnable=false`. Balanced without it: 13.2 %/yr (DD 7.0 %) in 2024‑26 and 6.3 %/yr (DD 8.9 %) over 2007–2026.
 
 **Disclaimer:** This is research software, not financial advice. Trading leveraged products carries a high risk of loss, including more than your deposit with some brokers. Only trade money you can afford to lose.

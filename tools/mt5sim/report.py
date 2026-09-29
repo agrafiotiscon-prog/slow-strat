@@ -22,7 +22,8 @@ def period_stats(eq, a, z):
     if len(e) < 20: return None
     c0 = e.equity.iloc[0]; yrs = (e.index[-1] - e.index[0]).days / 365.25
     cagr = (e.equity.iloc[-1] / c0) ** (1 / yrs) - 1
-    pk = np.maximum.accumulate(np.r_[c0, e.equity.values])[1:]
+    best = e.best.values if "best" in e else e.equity.values
+    pk = np.maximum.accumulate(np.r_[c0, best])[1:]      # intraday peak (drawdown measured like MT5's equity DD)
     dd = ((pk - e.worst.values) / pk).max()
     m = e.equity.resample("ME").last().pct_change().dropna()
     return dict(cagr=cagr, maxdd=dd, ret_to_dd=cagr / dd if dd > 0 else np.nan, pos_months=(m > 0).mean(), worst_month=m.min())
@@ -34,7 +35,8 @@ if __name__ == "__main__":
     y = eq.equity.resample("YE").last()
     y0 = pd.concat([pd.Series([eq.equity.iloc[0]], index=[eq.index[0]]), y])
     yr = y0.pct_change().dropna()
-    dd_y = eq.groupby(eq.index.year).apply(lambda e: ((np.maximum.accumulate(e.equity.values) - e.worst.values) / np.maximum.accumulate(e.equity.values)).max())
+    col = "best" if "best" in eq else "equity"
+    dd_y = eq.groupby(eq.index.year).apply(lambda e: ((np.maximum.accumulate(e[col].values) - e.worst.values) / np.maximum.accumulate(e[col].values)).max())
     print("\nYear   return   maxDD")
     for t, v in yr.items():
         print(f"{t.year}  {v*100:7.1f}%  {dd_y.get(t.year, np.nan)*100:6.1f}%")

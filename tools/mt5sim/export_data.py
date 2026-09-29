@@ -38,6 +38,24 @@ def write(path, bars: pd.DataFrame, spread: np.ndarray):
     print(path, len(arr), pd.Timestamp(arr["t"][0], unit="s"), pd.Timestamp(arr["t"][-1], unit="s"))
 
 
+def write_fx_daily(out, start):
+    """FX daily bars from FRED noon rates, stamped at the server-day open (for the Dollar Index filter)."""
+    import ext
+    conv = {"EURUSD": ("Euro", True), "USDJPY": ("Japan", False), "GBPUSD": ("United Kingdom", True),
+            "USDCAD": ("Canada", False), "USDSEK": ("Sweden", False), "USDCHF": ("Switzerland", False)}
+    for sym, (country, invert) in conv.items():
+        r = ext.fx_close(country)
+        r = r[r.index >= pd.Timestamp(start)]
+        v = (1.0 / r.values) if invert else r.values
+        arr = np.zeros(len(r), dtype=[("t", "<i8"), ("o", "<f8"), ("h", "<f8"), ("l", "<f8"), ("c", "<f8"), ("sp", "<f8")])
+        arr["t"] = r.index.values.astype("datetime64[s]").astype(np.int64)   # server-day 00:00
+        arr["o"] = arr["h"] = arr["l"] = arr["c"] = v
+        with open(f"{out}/{sym}.bin", "wb") as f:
+            f.write(struct.pack("<q", len(arr)))
+            f.write(arr.tobytes())
+        print(f"{out}/{sym}.bin", len(arr))
+
+
 if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/mt5sim_data"
     start = sys.argv[2] if len(sys.argv) > 2 else "2007-01-01"
@@ -51,6 +69,7 @@ if __name__ == "__main__":
         sp = S.spread_model(b, bps=M.SPREAD_BP[s], floor=0.0, roll_mult=4.0) + 2 * M.COMM_BP[s] * 1e-4 * b.close.values
         write(f"{out}/{s}.bin", b, sp)
         meta[s] = float(np.median(b.close.values) * 0.3e-4)
+    write_fx_daily(out, start)
     with open(f"{out}/slip.txt", "w") as f:
         for k, v in meta.items():
             f.write(f"{k} {v}\n")

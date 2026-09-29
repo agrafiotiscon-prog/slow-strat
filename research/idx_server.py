@@ -3,13 +3,20 @@ import itertools
 import numpy as np, pandas as pd
 import multi as M, strategies as S, engine as E, indicators as I
 
-def dip(bars, params, rule="rsi2ibs", lo=10, ibs_lo=0.2, trend_n=200, exit_ma=5, sl_atr=2.0, max_hold_d=10, atr_n=10):
+def dip(bars, params, rule="rsi2ibs", lo=10, ibs_lo=0.2, trend_n=200, exit_ma=5, sl_atr=2.0, max_hold_d=10, atr_n=10,
+        dxy_max=None, dxy_n=200):
     d = S.bars_tf(bars, "D1")
     c = d.close
     ibs = (c - d.low) / (d.high - d.low).replace(0, np.nan)
     r2 = I.rsi(c, 2)
     cond = {"rsi2": r2 < lo, "ibs": ibs < ibs_lo, "rsi2ibs": (r2 < lo) & (ibs < ibs_lo)}[rule]
     long_ = cond & (c > I.sma(c, trend_n))
+    if dxy_max is not None:
+        import ext
+        dx = ext.daily_features()[f"dxy_vs_sma{dxy_n}"]
+        # value known at this D1 bar's close (FRED noon rate of that day or earlier)
+        known = dx.reindex(d.index + pd.Timedelta("1D"), method="ffill").values
+        long_ &= pd.Series(known, d.index).fillna(0).values <= dxy_max
     a = I.atr(d, atr_n)
     ex = (c > I.sma(c, exit_ma)).astype(int)
     n = len(bars)

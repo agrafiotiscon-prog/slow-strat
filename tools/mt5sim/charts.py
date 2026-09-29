@@ -11,8 +11,8 @@ import pandas as pd  # noqa: E402
 import report as R  # noqa: E402
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "../../results"
-RUNS = {"Conservative": "/tmp/sim_preset0", "Balanced (default)": "/tmp/sim_preset1", "Aggressive": "/tmp/sim_preset2"}
-SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
+RUNS = {"Conservative": "/tmp/v2f_preset0", "Balanced (default)": "/tmp/v2f_preset1", "Growth": "/tmp/v2f_preset2", "Aggressive": "/tmp/v2f_preset3"}
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
 SURF, INK, INK2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1"
 
 plt.rcParams.update({"figure.facecolor": SURF, "axes.facecolor": SURF, "axes.edgecolor": GRID, "axes.labelcolor": INK2,
@@ -39,8 +39,8 @@ holdout_band(ax)
 ax.set_yscale("log")
 ax.yaxis.set_major_formatter(mt.FuncFormatter(lambda v, _: f"${v:,.0f}"))
 ax.yaxis.set_minor_formatter(mt.NullFormatter())
-ax.set_yticks([10000, 15000, 20000, 30000, 50000, 70000])
-ax.set_title("SlowStrat EA - equity from $10,000 (actual EA code, simulated 2007-06 .. 2026-09)", loc="left", fontsize=11)
+ax.set_yticks([10000, 15000, 20000, 30000, 50000, 75000])
+ax.set_title("SlowStrat EA v2 - equity from $10,000 (actual EA code, simulated 2007-06 .. 2026-09)", loc="left", fontsize=11)
 ax.legend(loc="upper left", frameon=False)
 ax.set_xlim(pd.Timestamp("2007-06-01"), pd.Timestamp("2029-06-01"))
 fig.tight_layout()
@@ -66,8 +66,7 @@ fig.tight_layout()
 fig.savefig(f"{OUT}/yearly_balanced.png", dpi=130)
 
 # 3. drawdown (underwater) of the default preset
-e = eq.equity
-pk = e.cummax()
+pk = (eq.best if "best" in eq else eq.equity).cummax()   # intraday peak, same measure as the tables
 dd = -(pk - eq.worst) / pk * 100
 fig, ax = plt.subplots(figsize=(10, 3.4))
 ax.fill_between(dd.index, dd.values, 0, color=SERIES[0], alpha=0.35, lw=0)

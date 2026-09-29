@@ -11,9 +11,9 @@
 //|  account first and only risk money you can afford to lose.       |
 //+------------------------------------------------------------------+
 #property copyright   "slow-strat"
-#property version     "1.00"
+#property version     "2.00"
 #property description "Low-drawdown portfolio EA: XAUUSD H4 trend breakout, XAUUSD Asian-range breakout,"
-#property description "US index (US500/NAS100/US30) daily dip-buyer. Risk-based sizing, drawdown brake,"
+#property description "US index (US500/NAS100/US30) daily dip-buyer with a US Dollar Index filter. Risk-based sizing, drawdown brake,"
 #property description "economic-calendar news filter, rollover/spread protection. Use a hedging account."
 
 #include <Trade/Trade.mqh>
@@ -22,9 +22,10 @@
 enum ENUM_SS_PRESET
   {
    SS_PRESET_CONSERVATIVE = 0, // Conservative (lowest drawdown)
-   SS_PRESET_BALANCED     = 1, // Balanced (default)
-   SS_PRESET_AGGRESSIVE   = 2, // Aggressive (higher return, higher drawdown)
-   SS_PRESET_CUSTOM       = 3  // Custom (use the risk inputs below)
+   SS_PRESET_BALANCED     = 1, // Balanced (default: ~6% drawdown target in today's market)
+   SS_PRESET_GROWTH       = 2, // Growth (more return, ~7% drawdown in today's market)
+   SS_PRESET_AGGRESSIVE   = 3, // Aggressive (highest return, highest drawdown)
+   SS_PRESET_CUSTOM       = 4  // Custom (use the risk inputs below)
   };
 
 //=================================================================== inputs
@@ -33,8 +34,8 @@ input ENUM_SS_PRESET InpPreset          = SS_PRESET_BALANCED; // Risk preset
 input double InpRiskMultiplier          = 1.0;   // Extra multiplier on every module's risk (1.0 = as preset)
 input double InpCustomGoldTrendRisk     = 0.60;  // [Custom] Gold trend risk % per trade
 input double InpCustomGoldAsiaRisk      = 0.50;  // [Custom] Gold Asia risk % per trade
-input double InpCustomIndexRisk         = 1.00;  // [Custom] Index dip risk % per trade (each index)
-input double InpMaxOpenRiskPct          = 5.0;   // Max total open risk % (sum of initial SL risk)
+input double InpCustomIndexRisk         = 1.50;  // [Custom] Index dip risk % per trade (each index)
+input double InpMaxOpenRiskPct          = 6.0;   // Max total open risk % (sum of initial SL risk)
 input long   InpMagicBase               = 7102600; // Magic number base (module adds +1/+2/+3)
 
 input group "=== Drawdown protection ==="
@@ -79,6 +80,11 @@ input int    InpID_ATR                  = 10;    // ATR period (D1)
 input double InpID_SLATR                = 2.0;   // Stop loss = x * ATR
 input int    InpID_MaxHoldDays          = 10;    // Time exit after N daily bars
 input double InpIndexCommissionPerLot   = 0.0;   // Round-trip commission per 1.0 lot, for sizing
+input int    InpID_MaxConcurrent        = 3;     // Max index positions open at the same time
+input bool   InpID_DXYFilter            = true;  // Only buy dips when the US Dollar Index is not strong
+input double InpID_DXYMaxAboveSMA       = 1.0;   // ...Dollar Index at most this % above its SMA
+input int    InpID_DXYSMA               = 200;   // ...SMA period (daily bars)
+input string InpDXYSymbols              = "";    // FX symbols for the Dollar Index ("" = auto EURUSD,USDJPY,GBPUSD,USDCAD,USDSEK,USDCHF)
 
 input group "=== Broker time ==="
 input bool   InpAutoGMTOffset           = true;  // Live: detect server GMT offset automatically
@@ -106,6 +112,7 @@ input bool   InpShowPanel               = true;  // Show status panel on chart
 #define MOD_GA   2
 #define MOD_ID   3
 #define MAX_IDX  8
+#define MAX_FX   6
 
 //=================================================================== state
 CTrade   g_trade;
@@ -142,6 +149,14 @@ datetime g_idLastEval[MAX_IDX];
 int      g_idEntryIntent[MAX_IDX];
 double   g_idIntentSL[MAX_IDX];
 bool     g_idExitIntent[MAX_IDX];
+
+// US Dollar Index (ICE formula) built from broker FX pairs; weights signed for the quote direction
+int      g_nFx = 0;
+string   g_fx[MAX_FX];
+double   g_fxW[MAX_FX];
+datetime g_dxyCacheBar = 0;
+double   g_dxyCacheRatio = 0;
+bool     g_dxyCacheOk = false;
 
 // risk state
 double   g_peak = 0;
@@ -903,6 +918,94 @@ void GoldAsiaExecute()
       g_gaIntentDir = 0;
   }
 
+//=================================================================== US Dollar Index filter
+void ResolveDXYSymbols()
+  {
+   g_nFx = 0;
+   string names[6] = {"EURUSD", "USDJPY", "GBPUSD", "USDCAD", "USDSEK", "USDCHF"};
+   double w[6] = {-0.576, 0.136, -0.119, 0.091, 0.042, 0.036};
+   string custom[];
+   int nc = 0;
+   if(InpDXYSymbols != "")
+      nc = StringSplit(InpDXYSymbols, ',', custom);
+   for(int i = 0; i < 6; i++)
+     {
+      string found = "";
+      if(nc > 0)
+        {
+         for(int j = 0; j < nc; j++)
+           {
+            string c = custom[j];
+            StringTrimLeft(c);
+            StringTrimRight(c);
+            if(StringFind(c, names[i]) == 0 && TrySymbol(c))
+               found = c;
+           }
+        }
+      else
+        {
+         string cand[];
+         ArrayResize(cand, 1);
+         cand[0] = names[i];
+         found = ResolveSymbol(cand);
+        }
+      if(found == "")
+         continue;
+      g_fx[g_nFx] = found;
+      g_fxW[g_nFx] = w[i];
+      g_nFx++;
+     }
+   if(InpID_DXYFilter && InpIndexEnable)
+     {
+      if(g_nFx == 0)
+         Print("SlowStrat: no FX symbols for the Dollar Index found - DXY filter inactive.");
+      else if(g_nFx < 6)
+         PrintFormat("SlowStrat: Dollar Index built from %d of 6 FX pairs (missing pairs are left out).", g_nFx);
+     }
+  }
+
+// Dollar Index vs its SMA, using FX daily closes of the day BEFORE the index signal bar
+// (the research used the previous day's official noon rates, so there is no look-ahead).
+bool DXYRatio(const datetime sigBar, double &ratio)
+  {
+   if(g_nFx == 0)
+      return false;
+   if(sigBar == g_dxyCacheBar)
+     {
+      ratio = g_dxyCacheRatio;
+      return g_dxyCacheOk;
+     }
+   g_dxyCacheBar = sigBar;
+   g_dxyCacheOk = false;
+   string ref = g_fx[0];
+   int s0 = iBarShift(ref, PERIOD_D1, sigBar - 1, false);
+   int n = InpID_DXYSMA;
+   if(s0 < 0 || Bars(ref, PERIOD_D1) < s0 + n + 1)
+      return false;
+   double sum = 0, first = 0;
+   for(int k = 0; k < n; k++)
+     {
+      datetime t = iTime(ref, PERIOD_D1, s0 + k);
+      double lg = 0;
+      for(int i = 0; i < g_nFx; i++)
+        {
+         int sh = (i == 0) ? s0 + k : iBarShift(g_fx[i], PERIOD_D1, t, false);
+         double c = (sh >= 0) ? iClose(g_fx[i], PERIOD_D1, sh) : 0;
+         if(c <= 0)
+            return false;
+         lg += g_fxW[i] * MathLog(c);
+        }
+      double v = MathExp(lg);
+      if(k == 0)
+         first = v;
+      sum += v;
+     }
+   ratio = first / (sum / n) - 1.0;
+   g_dxyCacheRatio = ratio;
+   g_dxyCacheOk = true;
+   return true;
+  }
+
 //=================================================================== module 3: index dips
 void IndexEvaluate()
   {
@@ -946,6 +1049,15 @@ void IndexEvaluate()
       double ibs = (h > l) ? (c - l) / (h - l) : 1.0;
       if(rsi < InpID_RSIMax && ibs < InpID_IBSMax && c > sma && atr > 0)
         {
+         if(InpID_DXYFilter && g_nFx > 0)
+           {
+            double ratio = 0;
+            if(DXYRatio(bar, ratio) && 100.0 * ratio > InpID_DXYMaxAboveSMA)
+              {
+               Log(StringFormat("SKIP;INDEX_DIP;%s;dollar index %.2f%% above SMA%d", sym, 100.0 * ratio, InpID_DXYSMA));
+               continue;
+              }
+           }
          g_idEntryIntent[k] = 1;
          g_idIntentSL[k] = InpID_SLATR * atr;
          Log(StringFormat("SIGNAL;INDEX_DIP;%s;BUY;close=%.2f;rsi=%.2f;ibs=%.3f;sma=%.2f;atr=%.2f", sym, c, rsi, ibs, sma, atr));
@@ -978,6 +1090,8 @@ void IndexExecute()
            { g_idEntryIntent[k] = 0; continue; }
          if(g_idExitIntent[k] || SymbolBusyNetting(sym))
             continue;
+         if(CountPositions(MOD_ID, "") >= InpID_MaxConcurrent)
+           { g_idEntryIntent[k] = 0; continue; }       // correlated exposure cap
          string why = "";
          if(!CanEnter(sym, InpMaxSpreadBpsIndex, why))
             continue;
@@ -1019,9 +1133,10 @@ void ApplyPreset()
   {
    switch(InpPreset)
      {
-      case SS_PRESET_CONSERVATIVE: g_riskGT = 0.30; g_riskGA = 0.25; g_riskID = 0.50; break;
-      case SS_PRESET_BALANCED:     g_riskGT = 0.60; g_riskGA = 0.50; g_riskID = 1.00; break;
-      case SS_PRESET_AGGRESSIVE:   g_riskGT = 0.90; g_riskGA = 0.75; g_riskID = 1.50; break;
+      case SS_PRESET_CONSERVATIVE: g_riskGT = 0.30; g_riskGA = 0.25; g_riskID = 0.75; break;
+      case SS_PRESET_BALANCED:     g_riskGT = 0.48; g_riskGA = 0.40; g_riskID = 1.20; break;
+      case SS_PRESET_GROWTH:       g_riskGT = 0.60; g_riskGA = 0.50; g_riskID = 1.50; break;
+      case SS_PRESET_AGGRESSIVE:   g_riskGT = 0.90; g_riskGA = 0.75; g_riskID = 2.25; break;
       default:                     g_riskGT = InpCustomGoldTrendRisk; g_riskGA = InpCustomGoldAsiaRisk; g_riskID = InpCustomIndexRisk;
      }
   }
@@ -1032,7 +1147,7 @@ void DrawPanel()
    if(!InpShowPanel)
       return;
    double eq = AccountInfoDouble(ACCOUNT_EQUITY);
-   string s = "SlowStrat v1.00  |  " + EnumToString(InpPreset) + "\n";
+   string s = "SlowStrat v2.00  |  " + EnumToString(InpPreset) + "\n";
    s += StringFormat("Equity %.2f  peak %.2f  DD %.2f%%  brake x%.2f%s\n", eq, g_peak, CurrentDDPct(), BrakeMultiplier(),
                      g_halted ? "  ** HALTED **" : "");
    s += StringFormat("Open risk %.2f%% (cap %.1f%%)   today %.2f%%\n", OpenRiskPct(), InpMaxOpenRiskPct,
@@ -1052,6 +1167,14 @@ void DrawPanel()
       s += g_idx[k] + (CountPositions(MOD_ID, g_idx[k]) > 0 ? "[IN] " : " ");
    if(g_nIdx == 0)
       s += "no symbols found";
+   if(InpID_DXYFilter && g_nFx > 0)
+     {
+      double r = 0;
+      bool ok = DXYRatio(iTime(g_fx[0], PERIOD_D1, 0), r);
+      s += ok ? StringFormat("\nDollar Index vs SMA%d: %+.2f%% (%d/6 pairs) -> index dips %s", InpID_DXYSMA, 100 * r, g_nFx,
+                             100 * r > InpID_DXYMaxAboveSMA ? "BLOCKED (strong USD)" : "allowed")
+                : "\nDollar Index: not enough FX history";
+     }
    s += "\nHigh-impact news: " + NextNews();
    Comment(s);
   }
@@ -1129,6 +1252,7 @@ int OnInit()
         }
       if(g_nIdx == 0)
          Print("SlowStrat: no index symbols found - index module idle. Set InpIndexSymbols (e.g. US500,NAS100,US30).");
+      ResolveDXYSymbols();
      }
 
    // persisted state

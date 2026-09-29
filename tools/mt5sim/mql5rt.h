@@ -145,6 +145,10 @@ inline double MathMin(double a, double b) { return a < b ? a : b; }
 inline double MathAbs(double a) { return std::fabs(a); }
 inline double MathFloor(double a) { return std::floor(a); }
 inline double MathRound(double a) { return std::round(a); }
+inline double MathLog(double a) { return std::log(a); }
+inline double MathExp(double a) { return std::exp(a); }
+inline double MathSqrt(double a) { return std::sqrt(a); }
+inline double MathPow(double a, double b) { return std::pow(a, b); }
 inline bool MathIsValidNumber(double a) { return std::isfinite(a); }
 inline double NormalizeDouble(double v, int d) { double p = std::pow(10.0, d); return std::round(v * p) / p; }
 inline string DoubleToString(double v, int d = 8) { char b[64]; snprintf(b, sizeof b, "%.*f", d, v); return string(b); }
