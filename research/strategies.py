@@ -410,6 +410,16 @@ def trend_bo(bars, tf="H4", n_entry=20, filt="none", sl_atr=2.0, atr_n=20, exit_
             s1 = np.sign(d1.close - I.sma(d1.close, 200))
             s2 = np.sign(xe - I.sma(xe, XAUEUR_N))
             fs = s1.where(s1 == s2, 0)
+        elif filt.startswith("sma200_gld"):
+            # gold trend must be confirmed by GLD ETF flows (holdings trend), known the next day
+            import positioning as PZ
+            col = {"sma200_gld50": "gld_vs_sma50", "sma200_gld20": "gld_chg20", "sma200_gld60": "gld_chg60"}[filt]
+            g = PZ.daily_flow_features()[col]
+            day = (d1.index + pd.Timedelta("1D")).normalize()
+            gv = pd.Series(g.reindex(pd.DatetimeIndex(day), method="ffill").values, d1.index)
+            s1 = np.sign(d1.close - I.sma(d1.close, 200))
+            s2 = np.sign(gv.fillna(0))
+            fs = s1.where((s1 == s2) | (s2 == 0), 0)
         elif filt == "both":
             fs = np.sign(d1.close - I.sma(d1.close, 200)) * ((np.sign(d1.close - I.sma(d1.close, 200)) ==
                                                                 np.sign(I.rsi(d1.close, 14) - 50)))

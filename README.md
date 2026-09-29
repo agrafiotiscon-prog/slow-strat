@@ -43,6 +43,28 @@ Most of these did **not** survive honest testing (details in [What did NOT work]
 
 With v2, index‑dip trades win **76 %** of the time (v1: 70 %) and the average trade is **+0.27 R** (v1: +0.15 R).
 
+### v3 research round: order flow and everything else (trading logic unchanged)
+
+For v3 I tested **order flow** plus every other improvement I could think of, under the same rules as before:
+- a rule had to help in each of 2012‑15, 2016‑19 and 2020‑23;
+- it had to hold up in 2024‑26;
+- nearby settings had to work too;
+- the gain had to survive the full engine, not just a trade‑by‑trade split.
+
+**Nothing passed, so the EA's trading logic stays exactly as in v2.** Adding rules that fail these tests would make the backtest prettier and live trading worse. Full results are in [What did NOT work](#what-did-not-work-and-was-rejected). In short:
+
+- **Order flow.** Real order flow (buyer/seller "delta", footprint charts, market depth) **does not exist for spot gold or index CFDs at MT5 brokers**. There is no central exchange tape, and MT5 "volume" is only a count of price ticks. I built every proxy an EA can compute from broker bars:
+  - bar delta, cumulative delta and delta divergence;
+  - daily and weekly VWAP;
+  - the prior day's volume profile (POC and value area);
+  - relative volume and climax bars.
+
+  None was a consistent filter for the existing trades. All **21 classic order‑flow strategies** tested lost money after costs: VWAP fades, the value‑area "80 % rule", POC rejections, climax reversals, and opening‑range breakouts confirmed by volume.
+- **Institutional positioning:** CFTC Commitments of Traders and SPDR Gold ETF (GLD) holdings. Two near misses, but both hurt at least one period and both need data MT5 does not provide.
+- **Sizing and trade management:** volatility‑targeted sizing, trading the equity curve, breakeven stops, limit‑order pullback entries, seasonality and time of day. All rejected.
+
+One practical finding: gold breakouts on **US jobs‑report (NFP) Fridays** were the best trades in the sample (+1.82 R average over 18 trades, versus +0.39 R otherwise). Most enter at the 09:00 New York bar, 30 minutes after the release. The default news blackout (`InpNewsAfterMin = 20`) lets them enter on time. If you set it to 30 minutes or more, the EA keeps retrying but enters later, at a worse price, which was not tested. **Keep the default.**
+
 ---
 
 ## Contents
@@ -221,6 +243,21 @@ Full per‑period tables and every simulated trade for each preset are in [`resu
 
 ## What did NOT work (and was rejected)
 
+**New in v3: order flow, positioning, sizing and trade management.** All are tested on the real trades of the v2 modules, and gold results are shown per era.
+
+| Tried | Result |
+|---|---|
+| **Order‑flow proxies as filters** (15 measures: bar delta, cumulative delta, delta/price divergence, day and week VWAP distance, prior‑day POC and value area, relative volume, climax bars, day volume) | For the gold trend no measure had the same sign across the three development eras and the holdout. The best Asia candidate, delta divergence, gave +0.15 / +0.13 R in 2012‑19 but +0.01 R in 2020‑23 and −0.08 R in 2007‑11. Rejected. [`results/orderflow_filters_*.csv`](results) |
+| **Order‑flow strategies** (VWAP‑deviation fade, value‑area "80 % rule", prior‑day POC rejection, volume‑climax reversal, London/NY opening‑range breakout with relative‑volume confirmation: 21 variants) | **All 21 lost money after costs** (best −0.02 R per trade), and none was positive in all three development eras. [`results/orderflow_strategies.csv`](results/orderflow_strategies.csv) |
+| **GLD ETF flows** (only trade gold trends that ETF holdings confirm) | Positive trade‑by‑trade in 4 of 5 eras. In the full engine it filtered out too many big winners: the gold module fell from 5.2 to 3.9 %/yr, and 2007‑11 fell from 3.0 to 0.4 %/yr. It also needs an outside data feed. Rejected. |
+| **COT positioning** (CFTC managed money, producers, non‑commercials; levels, 1‑ and 3‑year ranks, changes; with the real Friday publication delay) | Most measures flip sign between eras. **Closest miss of the whole round:** skip a gold breakout when hedge funds added more than 4 % of open interest in that direction over the last 2 weeks (a "crowded" move). On the gold module alone, its full‑period return per unit of drawdown beat 99 % of 200 random filters that drop the same share of trades. In the full portfolio, though, it left 2007‑26 return unchanged (6.5 %/yr, drawdown 9.5 → 8.9 %). It improved 2020‑26 but made 2007‑15 worse, and the 8‑ and 13‑week versions did worse than no filter at all. It would also need a weekly CFTC download inside MT5, and the Strategy Tester can't do that. Rejected. [`results/cot_*.csv`](results) |
+| **Volatility‑targeted sizing** (scale risk by target ÷ recent volatility, clipped at 0.5–1.5× or 0.67–1.25×) | It mostly added leverage. For the gold trend, return per unit of drawdown got worse in 2007‑11 and 2016‑19 and better elsewhere; the Asia module was also mixed. It doesn't help in every period. Rejected. |
+| **Trading the equity curve** (halve a module's risk while its equity is below its 20‑ or 50‑trade average, or stop it entirely) | Lower or equal returns in every era. Drawdown fell in some eras, but return per unit of drawdown fell in 2020‑23 and 2024‑26. Rejected. |
+| **Breakeven stop** (at 1, 1.5 or 2 R, with or without +0.25 R locked) | Cuts the big trend winners. The best version (2 R) is 5.5 vs 5.2 %/yr, with drawdown 15.0 vs 13.2 %. Rejected. |
+| **Limit‑order pullback entries** (buy 0.1–0.75 ATR below the breakout, same stop) | The trades that pull back are mostly the failed breakouts (adverse selection). Gold trend avg R fell from 0.46 to between 0.44 and −0.06, and the Asia module also got worse. Rejected. [`results/limit_entry_tests.csv`](results/limit_entry_tests.csv) |
+| **Seasonality** ("gold rises in January", month‑of‑year) | January looked strong, but placebo months were also positive (gold simply rose), and it was about zero in two eras. Rejected. |
+| **Time of day** of the gold breakout entry | No H4 slot was consistently better or worse across eras. Nothing to filter. |
+
 **New in v2 — other tools and data:**
 
 | Tried | Result |
@@ -231,7 +268,7 @@ Full per‑period tables and every simulated trade for each preset are in [`resu
 | **MACD, RSI, Keltner, Stochastic, CCI, Supertrend, Ichimoku, Parabolic SAR, Bollinger** as confirmation filters | 4‑hour MACD, RSI and Keltner "confirmations" helped in 2012–23 and then flipped sign in 2024–26. The rest never helped consistently. Rejected. |
 | **Tick volume, volatility regime, oil trend, S&P 500 trend** as gold filters | Each helped some eras and hurt others, and all cut total profit. Rejected. |
 | **Dollar Index moves as a filter for the Asia breakout** | Strong in 2012–23, no benefit in 2024–26, and no economic logic. Rejected as data‑mining. |
-| **Treasury yields, silver, COT positioning** | Couldn't be validated: no data for 2024–26 or not available here. Most MT5 brokers don't offer yields anyway. |
+| **Treasury yields, silver** | Couldn't be validated: no data for 2024–26 here. Most MT5 brokers don't offer yields anyway. (COT positioning was tested later, in v3; see above.) |
 
 **From v1 research:**
 - **Short‑term mean reversion on gold** (RSI‑2 dips, Bollinger fades, previous‑day high/low sweep reversals): no edge after costs.
@@ -295,6 +332,7 @@ Full per‑period tables and every simulated trade for each preset are in [`resu
 - **The Dollar Index comes from your broker's FX quotes.** If FX history is short (under ~210 daily bars), the filter stays off until there is enough. The on‑chart panel shows its status.
 - **High‑impact news.** The MT5 calendar filter (live only, not in the Strategy Tester) blocks new entries around USD events: NFP, CPI, FOMC, GDP, retail sales, PCE and ISM.
   - Open positions are not closed before news; their stops are server‑side.
+  - Keep `InpNewsAfterMin` at its default (20). Gold breakouts entered at 09:00 NY on jobs‑report Fridays were the best trades in the test, and a longer blackout would push them later.
   - A news spike can still gap through a stop. The worst case in 19 years was −1.48 R.
 - **Rollover (17:00 New York).** Spreads widen 5–20×. The EA never *opens* trades 16:30–18:30 NY, but an existing stop can be hit by the spread spike.
 - **Weekend gaps.** Positions are held over weekends, because the trend module needs to be. A gap past the stop fills at the gap price.
@@ -323,6 +361,11 @@ python3 final_portfolio.py && python3 stress.py   # v1 portfolio, cost stress, d
 python3 feat_scan.py && python3 filter_test.py    # v2: indicator + intermarket feature scan and filter tests
 python3 ml_meta.py && python3 vix_strat.py        # v2: walk-forward ML filter, VIX-stretch module (both rejected)
 python3 intermarket/dxy_filter_plateau.py         # v2: Dollar-Index filter plateau (accepted)
+python3 intermarket/dxy_filter_portfolio.py       # writes the v2 module trade lists used by the v3 scans below
+python3 of_scan.py && python3 of_strats.py        # v3: order-flow proxies as filters / order-flow strategies (rejected)
+python3 pos_scan.py && python3 intermarket/gld_filter.py && python3 intermarket/cot_filter.py \
+        && python3 intermarket/cot_placebo.py     # v3: COT + GLD-flow positioning (rejected)
+python3 sizing_tests.py && python3 seasonal.py && python3 mgmt_tests.py && python3 limit_tests.py  # v3: sizing, seasonality, breakeven, limit entries
 cd ../tools/mt5sim
 ./run_ea_backtest.sh                         # translate + compile + run the ACTUAL EA over 2007-2026
 ./run_ea_backtest.sh InpPreset=2 --spread_mult=2   # any input / stress

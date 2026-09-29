@@ -44,6 +44,7 @@ class StratParams:
     max_pos: int = 1               # max simultaneous positions for this strategy
     trail_r: float = 0.0           # trail at this many R behind the best price (0 = off)
     trail_start: float = 0.0       # start trailing after this many R of profit
+    lim_expiry: int = 0            # bars a pending limit entry stays live (used when Signals.lim > 0)
 
 
 @nb.njit(cache=True)
@@ -57,8 +58,8 @@ def _round_lot(x, step, mn, mx):
 
 
 @nb.njit(cache=True)
-def _simulate(o, h, l, c, spread, roll_mult, sig_dir, sig_sl, sig_tp, sig_exit,
-              p_risk, p_hold, p_be, p_beoff, p_maxpos, p_trail, p_trstart,
+def _simulate(o, h, l, c, spread, roll_mult, sig_dir, sig_sl, sig_tp, sig_exit, sig_lim,
+              p_risk, p_hold, p_be, p_beoff, p_maxpos, p_trail, p_trstart, p_lexp,
               contract, commission, slip, lot_step, min_lot, max_lot, swap_l, swap_s,
               equity0, compounding):
     n = o.shape[0]
@@ -75,7 +76,14 @@ def _simulate(o, h, l, c, spread, roll_mult, sig_dir, sig_sl, sig_tp, sig_exit,
     prisk = np.zeros(MAXP)    # initial SL distance (price)
     pbest = np.zeros(MAXP)
     pswap = np.zeros(MAXP)
+    plim = np.zeros(MAXP, np.bool_)   # opened by a limit fill on bar pbar (no same-bar TP / trail credit)
     pcount = np.zeros(K, np.int64)
+    # one pending limit entry per strategy
+    q_dir = np.zeros(K, np.int64)
+    q_px = np.zeros(K)        # limit price (ask for buys, bid for sells)
+    q_sl = np.zeros(K)        # absolute SL price (anchored to the signal-bar market entry)
+    q_tp = np.zeros(K)        # TP distance
+    q_end = np.zeros(K, np.int64)
 
     max_tr = n // 2 + 16
     t_k = np.zeros(max_tr, np.int64)
@@ -126,6 +134,17 @@ def _simulate(o, h, l, c, spread, roll_mult, sig_dir, sig_sl, sig_tp, sig_exit,
         # ---------- 2. entries at open ----------
         for k in range(K):
             d = sig_dir[k, i]
+            if d != 0 and sig_lim[k, i] > 0:
+                if pcount[k] >= p_maxpos[k] or not (sig_sl[k, i] > 0):
+                    continue
+                # new pending limit order (replaces any older one)
+                ref = o[i] + sp if d == 1 else o[i]
+                q_dir[k] = d
+                q_px[k] = ref - d * sig_lim[k, i]
+                q_sl[k] = ref + d * slip - d * sig_sl[k, i]   # same SL price a market entry would get
+                q_tp[k] = sig_tp[k, i]
+                q_end[k] = i + p_lexp[k]
+                continue
             if d == 0 or pcount[k] >= p_maxpos[k]:
                 continue
             sl_d = sig_sl[k, i]
@@ -149,7 +168,7 @@ def _simulate(o, h, l, c, spread, roll_mult, sig_dir, sig_sl, sig_tp, sig_exit,
             if slot < 0:
                 continue
             pk[slot] = k; pdir[slot] = d; pentry[slot] = ep; plots[slot] = lots; pbar[slot] = i
-            prisk[slot] = sl_d; pswap[slot] = 0.0
+            prisk[slot] = sl_d; pswap[slot] = 0.0; plim[slot] = False
             if d == 1:
                 psl[slot] = ep - sl_d
                 ptp[slot] = ep + sig_tp[k, i] if sig_tp[k, i] > 0 else 1e18
@@ -158,6 +177,51 @@ def _simulate(o, h, l, c, spread, roll_mult, sig_dir, sig_sl, sig_tp, sig_exit,
                 psl[slot] = ep + sl_d
                 ptp[slot] = ep - sig_tp[k, i] if sig_tp[k, i] > 0 else -1e18
                 pbest[slot] = ep
+            pcount[k] += 1
+
+        # ---------- 2b. pending limit fills (anywhere inside the bar) ----------
+        for k in range(K):
+            if q_dir[k] == 0:
+                continue
+            if i >= q_end[k]:
+                q_dir[k] = 0
+                continue
+            if pcount[k] >= p_maxpos[k]:
+                continue
+            d = q_dir[k]
+            if d == 1:
+                if l[i] + sp > q_px[k]:
+                    continue
+                ep = min(o[i] + sp, q_px[k])
+            else:
+                if h[i] < q_px[k]:
+                    continue
+                ep = max(o[i], q_px[k])
+            q_dir[k] = 0
+            dist = (q_px[k] - q_sl[k]) * d            # risk distance used for sizing (known at placement)
+            rdist = (ep - q_sl[k]) * d                 # actual distance from the fill
+            if not (dist > 0) or not (rdist > 0):
+                continue
+            eq_ref = balance if compounding else equity0
+            per_lot_loss = (dist + slip) * contract + 2 * commission
+            lots = _round_lot(eq_ref * p_risk[k] / per_lot_loss, lot_step, min_lot, max_lot)
+            if lots <= 0:
+                continue
+            slot = -1
+            for j in range(MAXP):
+                if pk[j] < 0:
+                    slot = j
+                    break
+            if slot < 0:
+                continue
+            pk[slot] = k; pdir[slot] = d; pentry[slot] = ep; plots[slot] = lots; pbar[slot] = i
+            prisk[slot] = rdist; pswap[slot] = 0.0; plim[slot] = True
+            psl[slot] = q_sl[k]
+            if d == 1:
+                ptp[slot] = ep + q_tp[k] if q_tp[k] > 0 else 1e18
+            else:
+                ptp[slot] = ep - q_tp[k] if q_tp[k] > 0 else -1e18
+            pbest[slot] = ep
             pcount[k] += 1
 
         # ---------- 3. intrabar SL / TP ----------
@@ -170,7 +234,7 @@ def _simulate(o, h, l, c, spread, roll_mult, sig_dir, sig_sl, sig_tp, sig_exit,
             reason = EXIT_SL
             if pdir[j] == 1:
                 sl_hit = l[i] <= psl[j]
-                tp_hit = h[i] >= ptp[j]
+                tp_hit = h[i] >= ptp[j] and not (plim[j] and pbar[j] == i)
                 if sl_hit:
                     hit = True
                     xp = min(o[i], psl[j]) - slip
@@ -184,7 +248,7 @@ def _simulate(o, h, l, c, spread, roll_mult, sig_dir, sig_sl, sig_tp, sig_exit,
                 ah = h[i] + sp
                 al = l[i] + sp
                 sl_hit = ah >= psl[j]
-                tp_hit = al <= ptp[j]
+                tp_hit = al <= ptp[j] and not (plim[j] and pbar[j] == i)
                 if sl_hit:
                     hit = True
                     xp = max(o[i] + sp, psl[j]) + slip
@@ -211,6 +275,8 @@ def _simulate(o, h, l, c, spread, roll_mult, sig_dir, sig_sl, sig_tp, sig_exit,
             if pk[j] < 0:
                 continue
             k = pk[j]
+            if plim[j] and pbar[j] == i:
+                continue
             R = prisk[j]
             if pdir[j] == 1:
                 if h[i] > pbest[j]:
@@ -290,6 +356,7 @@ class Signals:
     tp: np.ndarray                 # TP distance in price (0 = none)
     exit: np.ndarray | None = None  # +1 close longs, -1 close shorts, 2 close all (at bar open)
     params: StratParams = field(default_factory=StratParams)
+    lim: np.ndarray | None = None   # >0: enter with a limit this far better than the open (SL stays anchored)
 
 
 @dataclass
@@ -367,17 +434,20 @@ def run(bars: pd.DataFrame, strategies: list[Signals], costs: Costs = Costs(),
     ssl = np.zeros((K, n))
     stp = np.zeros((K, n))
     sx = np.zeros((K, n), np.int64)
+    slim = np.zeros((K, n))
     for k, s in enumerate(strategies):
         sd[k] = s.direction
         ssl[k] = np.nan_to_num(s.sl)
         stp[k] = np.nan_to_num(s.tp)
         if s.exit is not None:
             sx[k] = s.exit
+        if s.lim is not None:
+            slim[k] = np.nan_to_num(s.lim)
     P = [s.params for s in strategies]
     arr = lambda f, t=np.float64: np.array([getattr(p, f) for p in P], t)
-    out = _simulate(o, h, l, c, sp, roll, sd, ssl, stp, sx,
+    out = _simulate(o, h, l, c, sp, roll, sd, ssl, stp, sx, slim,
                     arr("risk"), arr("max_hold", np.int64), arr("be_trigger"), arr("be_offset"),
-                    arr("max_pos", np.int64), arr("trail_r"), arr("trail_start"),
+                    arr("max_pos", np.int64), arr("trail_r"), arr("trail_start"), arr("lim_expiry", np.int64),
                     costs.contract, costs.commission, costs.slip, costs.lot_step, costs.min_lot,
                     costs.max_lot, costs.swap_long, costs.swap_short, equity0, compounding)
     tk, tdir, tei, txi, tep, txp, tl, tpnl, tr, trs, eqc, eql, bal = out

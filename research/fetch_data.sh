@@ -4,6 +4,9 @@
 #   XAUUSD M5 2004 .. 2026-01 (OctaFX MT4 export):          farshoffs/casio
 #   FX / index / metals H1 2007 .. 2023-09 (MT5 export):    TheSnowGuru/Stocks-Futures-Financial-Time-series-Tick-Bar-Data
 #   last ~6 months M1 and ~2y daily samples (auto-updated):  getdata-finance/*
+#   v2: Fed H.10 daily FX (Dollar Index), VIX, oil:           datasets/exchange-rates, finance-vix, oil-prices
+#   v3: CFTC COT gold (disaggregated) + GLD holdings:        Jim-Lohse/investment-lab
+#   v3: CFTC COT gold (legacy, 1986-):                       ngohamah/cot_analysis
 set -euo pipefail
 DEST="${DATA_REPOS:-/home/user/data_repos}"
 mkdir -p "$DEST" "$DEST/gdf"
@@ -19,6 +22,19 @@ SNOW=TheSnowGuru_Stocks-Futures-Financial-Time-series-Tick-Bar-Data
 if [ ! -d "$SNOW" ]; then
   git clone --depth 1 --filter=blob:none --no-checkout https://github.com/TheSnowGuru/Stocks-Futures-Financial-Time-series-Tick-Bar-Data "$SNOW"
   git -C "$SNOW" checkout HEAD -- 'forex/*_H1.csv' 'forex/audcad/AUDCAD60.csv' 'indices/*_H1.csv' 'commodities/gold/XAUUSD_H1.csv' 'commodities/silver/XAGUSD_H1.csv'
+fi
+
+for r in exchange-rates finance-vix oil-prices; do
+  [ -d "datasets_$r" ] || git clone -q --depth 1 "https://github.com/datasets/$r" "datasets_$r"
+done
+if [ ! -d Jim-Lohse_investment-lab ]; then
+  git clone -q --depth 1 --filter=blob:none --no-checkout https://github.com/Jim-Lohse/investment-lab Jim-Lohse_investment-lab
+  git -C Jim-Lohse_investment-lab checkout HEAD -- data/flows/gld_holdings.csv \
+      data/cftc/raw/disagg_fut_088691_2006-06-13_2026-09-24.json
+fi
+if [ ! -d ngohamah_cot_analysis ]; then
+  git clone -q --depth 1 --filter=blob:none --no-checkout https://github.com/ngohamah/cot_analysis ngohamah_cot_analysis
+  git -C ngohamah_cot_analysis checkout HEAD -- data/GOLD.csv
 fi
 
 cd gdf
