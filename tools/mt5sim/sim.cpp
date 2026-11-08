@@ -14,6 +14,13 @@ Runtime RT;
 #include <sys/stat.h>
 
 static std::map<std::string, double> g_slip;
+// optional prop-firm style costs: commission as % of position value per side, swap as % per year of the open price
+static double g_comm_pct = 0;           // --comm_pct=0.0325  (per side, % of notional)
+static bool g_swap_override = false;    // --swap_pct=-30     (annual %, longs and shorts)
+static double g_swap_pct = 0;
+static bool g_swap_calendar = false;    // --swap_calendar=1  (every calendar night, no triple day)
+
+static double comm_side(const Position& p, const SymbolData& s) { return p.commission > 0 ? p.commission : s.spec.commission_side * p.vol; }
 
 static std::vector<Bar> load_bin(const std::string& path) {
   std::vector<Bar> v;
@@ -54,7 +61,7 @@ double rt_equity() {
   for (auto& p : RT.pos) {
     SymbolData& s = RT.syms[p.sym];
     double px = p.type == 0 ? s.bid : s.ask;
-    eq += (px - p.open) * (p.type == 0 ? 1 : -1) * p.vol * s.spec.contract + p.swap - 2 * s.spec.commission_side * p.vol;
+    eq += (px - p.open) * (p.type == 0 ? 1 : -1) * p.vol * s.spec.contract + p.swap - 2 * comm_side(p, s);
   }
   return eq;
 }
@@ -73,9 +80,10 @@ bool rt_open_position(const std::string& sym, int type, double vol, double sl, d
   Position p;
   p.ticket = ++RT.next_ticket; p.sym = sym; p.type = type; p.vol = vol; p.open = px; p.sl = sl; p.tp = tp;
   p.time = RT.now; p.magic = magic; p.comment = cmt;
+  if (g_comm_pct > 0) p.commission = g_comm_pct / 100.0 * px * vol * s.spec.contract;
   RT.pos.push_back(p);
   RT.sl0[p.ticket] = sl > 0 ? std::fabs(px - sl) : 0;
-  Deal d{++RT.next_ticket, sym, magic, DEAL_ENTRY_IN, p.ticket, 0, 0, -s.spec.commission_side * vol, DEAL_REASON_EXPERT, RT.now, type, vol, px};
+  Deal d{++RT.next_ticket, sym, magic, DEAL_ENTRY_IN, p.ticket, 0, 0, -comm_side(p, s), DEAL_REASON_EXPERT, RT.now, type, vol, px};
   RT.deals.push_back(d);
   queue_tx(d.ticket);
   fill = px; ticket = p.ticket; retcode = TRADE_RETCODE_DONE;
@@ -86,9 +94,9 @@ void rt_close_position(size_t idx, double price, int reason) {
   Position p = RT.pos[idx];
   SymbolData& s = RT.syms[p.sym];
   double gross = (price - p.open) * (p.type == 0 ? 1 : -1) * p.vol * s.spec.contract;
-  double comm = -2 * s.spec.commission_side * p.vol;
+  double comm = -2 * comm_side(p, s);
   RT.balance += gross + p.swap + comm;
-  Deal d{++RT.next_ticket, p.sym, p.magic, DEAL_ENTRY_OUT, p.ticket, gross, p.swap, -s.spec.commission_side * p.vol, reason, RT.now,
+  Deal d{++RT.next_ticket, p.sym, p.magic, DEAL_ENTRY_OUT, p.ticket, gross, p.swap, -comm_side(p, s), reason, RT.now,
          1 - p.type, p.vol, price};
   RT.deals.push_back(d);
   TradeRecord tr{p.ticket, p.sym, p.magic, p.type == 0 ? 1 : -1, p.vol, p.open, price, RT.sl0[p.ticket], p.time, RT.now,
@@ -143,6 +151,9 @@ int main(int argc, char** argv) {
     if (k == "--deposit") deposit = atof(v.c_str());
     else if (k == "--spread_mult") spread_mult = atof(v.c_str());
     else if (k == "--slip_mult") slip_mult = atof(v.c_str());
+    else if (k == "--comm_pct") g_comm_pct = atof(v.c_str());
+    else if (k == "--swap_pct") { g_swap_override = true; g_swap_pct = atof(v.c_str()); }
+    else if (k == "--swap_calendar") g_swap_calendar = v == "1";
     else if (k == "--start" || k == "--end") {
       MqlDateTime s; s.year = atoi(v.substr(0, 4).c_str()); s.mon = atoi(v.substr(5, 2).c_str()); s.day = atoi(v.substr(8, 2).c_str());
       (k == "--start" ? t_start : t_end) = StructToTime(s);
@@ -209,12 +220,12 @@ int main(int argc, char** argv) {
     // swaps at the server-day change (triple on the rollover that closes Wednesday)
     datetime day = T - (T % 86400);
     if (prev_day >= 0 && day != prev_day) {
-      int mult = weekday(prev_day) == 3 ? 3 : 1;
+      int mult = g_swap_calendar ? (int)((day - prev_day) / 86400) : (weekday(prev_day) == 3 ? 3 : 1);
       for (auto& p : RT.pos) {
         SymbolData& s = RT.syms[p.sym];
-        double notional = s.bid * p.vol * s.spec.contract;
-        double rate = p.type == 0 ? s.spec.swap_long : s.spec.swap_short;
-        p.swap += notional * rate / 360.0 * mult;
+        double notional = (g_swap_override ? p.open : s.bid) * p.vol * s.spec.contract;
+        double rate = g_swap_override ? g_swap_pct / 100.0 : (p.type == 0 ? s.spec.swap_long : s.spec.swap_short);
+        p.swap += notional * rate / (g_swap_calendar ? 365.0 : 360.0) * mult;
       }
     }
     prev_day = day;
@@ -230,7 +241,7 @@ int main(int argc, char** argv) {
     for (auto& p : RT.pos) {
       SymbolData& s = RT.syms[p.sym];
       const Bar& b = s.base[s.cur];
-      double extra = p.swap - 2 * s.spec.commission_side * p.vol;
+      double extra = p.swap - 2 * comm_side(p, s);
       if (p.type == 0) { eq_close += (b.c - p.open) * p.vol * s.spec.contract + extra; eq_worst += (b.l - p.open) * p.vol * s.spec.contract + extra; }
       else { eq_close += (p.open - b.c - b.sp) * p.vol * s.spec.contract + extra; eq_worst += (p.open - b.h - b.sp) * p.vol * s.spec.contract + extra; }
     }

@@ -293,6 +293,8 @@ Full per‑period tables and every simulated trade for each preset are in [`resu
    
    Suffixes such as `.r` or `m` are auto‑detected. If your broker uses other names, set `InpGoldSymbol`, `InpIndexSymbols` and `InpDXYSymbols`.
 6. **Broker time:** `InpServerGMTOffsetWinter = 2` and `InpServerUsesUSDST = true` suit most brokers (GMT+2/+3). The EA auto‑detects this live, but it must be set correctly in the **Strategy Tester**.
+   - For a **London‑time server** (UTC in winter, UTC+1 in summer), set `InpServerGMTOffsetWinter = 0`, `InpServerUsesUSDST = false` and `InpServerUsesEUDST = true`.
+   - Expect weaker results on such servers. Their H4 and D1 bars differ from the New‑York‑close bars the strategy was built on: in the emulator, 2007–26 drops from 7.5 to 5.6 %/yr and drawdown rises from 9.0 to 11.0 % (Balanced, $100k).
 7. **Commission:** set `InpGoldCommissionPerLot` to your broker's gold round‑trip commission per lot (default 7.0).
 8. **VPS:** run it 24/5 on a VPS near your broker's server.
 
@@ -308,6 +310,7 @@ Full per‑period tables and every simulated trade for each preset are in [`resu
 | `InpHardStopDDPct` | 20 | Close all and halt; resume with `InpResetPeakOnStart=true` |
 | `InpMaxOpenRiskPct` | 6 | Cap on the sum of initial risk across open trades |
 | `InpNewsBeforeMin` / `After` | 30 / 20 | High‑impact news blackout for new entries |
+| `InpNoOppositePositions` | true | Never opens against a position on the same symbol that is less than 24 h old (some prop firms ban opposite positions; the backtest never needed this) |
 
 **Choosing a preset:**
 

@@ -19,11 +19,16 @@ import multi as M  # noqa: E402
 import strategies as S  # noqa: E402
 
 
-TZ = os.environ.get("SIM_TZ", "ny7")   # ny7 = GMT+2/+3 New-York-close server; utcN = fixed GMT+N
+TZ = os.environ.get("SIM_TZ", "ny7")   # ny7 = GMT+2/+3 New-York-close server; london = UTC/UTC+1 (EU DST); utcN = fixed GMT+N
 
 
 def write(path, bars: pd.DataFrame, spread: np.ndarray):
-    st = S.server_time(bars.index) if TZ == "ny7" else bars.index + pd.Timedelta(hours=int(TZ[3:]))
+    if TZ == "ny7":
+        st = S.server_time(bars.index)
+    elif TZ == "london":     # London clock: UTC in winter, UTC+1 in EU summer time
+        st = bars.index.tz_localize("UTC").tz_convert("Europe/London").tz_localize(None)
+    else:
+        st = bars.index + pd.Timedelta(hours=int(TZ[3:]))
     t = (st.values.astype("datetime64[s]").astype(np.int64))
     arr = np.zeros(len(bars), dtype=[("t", "<i8"), ("o", "<f8"), ("h", "<f8"), ("l", "<f8"), ("c", "<f8"), ("sp", "<f8")])
     arr["t"] = t

@@ -1,0 +1,26 @@
+SlowStrat v2.01, Balanced preset, $100,000, actual EA code in the MT5 emulator, Jun 2007 - Sep 2026.
+Each cell: annual return / max drawdown (intraday peak).  Costs as published for Crypto Fund Trader (CFT)
+funded accounts: commission 0.0325 % per side of position value, swap -30 %/yr of the open price charged
+every calendar night (longs and shorts), London-time server (UTC / UTC+1 with EU summer time).
+It is NOT confirmed that CFT's commission and swap apply to XAUUSD.cft and the index symbols - check the
+symbol Specification in MT5.
+
+scenario                                        2007-2026       2020-2023       2024-2026       2025
+Normal broker (NY-close server, normal costs)   +7.5% / 9.0%    +6.5% / 9.0%    +18.1% / 5.8%   +21.2% / 4.3%
+London-time server only                         +5.6% / 11.0%   +5.2% / 11.0%   +14.5% / 6.0%   +15.4% / 6.0%
+CFT commission only (NY server)                 +4.2% / 11.2%   +3.5% / 11.2%   +12.9% / 4.7%   +16.3% / 4.5%
+CFT swap only (NY server)                       +1.2% / 14.0%   +1.3% / 13.9%   +7.3% / 4.4%    +5.6% / 3.9%
+London server + CFT commission                  +2.2% / 13.7%   +2.3% / 13.7%   +9.2% / 5.5%    +8.3% / 4.6%
+London server + CFT commission + CFT swap       hit the 20 % hard stop in 2010 (account halted)
+
+Average R per trade (gold trend / gold Asia / index dips):
+  normal broker      +0.48 / +0.04 / +0.27
+  CFT commission     +0.37 / -0.01 / +0.24
+  CFT swap           +0.10 / -0.01 / +0.17
+Average holding time: gold trend 2.9 days, gold Asia 1.1 days, index dips 3.8 days.
+
+Reproduce (tools/mt5sim):
+  SIM_TZ=london python3 export_data.py /tmp/mt5sim_data_london 2006-01-01
+  ./sim /tmp/mt5sim_data_london OUT --start=2007-06-01 --deposit=100000 \
+        InpServerGMTOffsetWinter=0 InpServerUsesUSDST=false InpServerUsesEUDST=true \
+        --comm_pct=0.0325 --swap_pct=-30 --swap_calendar=1

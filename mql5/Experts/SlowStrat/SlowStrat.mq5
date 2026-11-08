@@ -11,7 +11,7 @@
 //|  account first and only risk money you can afford to lose.       |
 //+------------------------------------------------------------------+
 #property copyright   "slow-strat"
-#property version     "2.00"
+#property version     "2.01"
 #property description "Low-drawdown portfolio EA: XAUUSD H4 trend breakout, XAUUSD Asian-range breakout,"
 #property description "US index (US500/NAS100/US30) daily dip-buyer with a US Dollar Index filter. Risk-based sizing, drawdown brake,"
 #property description "economic-calendar news filter, rollover/spread protection. Use a hedging account."
@@ -37,6 +37,7 @@ input double InpCustomGoldAsiaRisk      = 0.50;  // [Custom] Gold Asia risk % pe
 input double InpCustomIndexRisk         = 1.50;  // [Custom] Index dip risk % per trade (each index)
 input double InpMaxOpenRiskPct          = 6.0;   // Max total open risk % (sum of initial SL risk)
 input long   InpMagicBase               = 7102600; // Magic number base (module adds +1/+2/+3)
+input bool   InpNoOppositePositions     = true;  // Never open against a position on the same symbol younger than 24h (prop-firm rule)
 
 input group "=== Drawdown protection ==="
 input bool   InpDDBrake                 = true;  // Reduce risk while in drawdown
@@ -90,6 +91,7 @@ input group "=== Broker time ==="
 input bool   InpAutoGMTOffset           = true;  // Live: detect server GMT offset automatically
 input int    InpServerGMTOffsetWinter   = 2;     // Server GMT offset in (northern) winter (tester / manual)
 input bool   InpServerUsesUSDST         = true;  // Server shifts +1h with US daylight saving (NY-close brokers)
+input bool   InpServerUsesEUDST         = false; // Server shifts +1h with EU daylight saving (London/European-time servers)
 input int    InpRolloverBeforeMin       = 30;    // No entries from 17:00 NY minus this
 input int    InpRolloverAfterMin        = 90;    // ...until 17:00 NY plus this
 
@@ -193,9 +195,28 @@ bool IsUSDST(const datetime utc)
    return (utc >= st && utc < en);
   }
 
+// EU summer time: last Sunday of March 01:00 UTC -> last Sunday of October 01:00 UTC
+bool IsEUDST(const datetime utc)
+  {
+   MqlDateTime t;
+   TimeToStruct(utc, t);
+   datetime st = NthSunday(t.year, 4, 1) - 7 * 86400 + 3600;
+   datetime en = NthSunday(t.year, 11, 1) - 7 * 86400 + 3600;
+   return (utc >= st && utc < en);
+  }
+
+int DSTShift(const datetime utc)
+  {
+   if(InpServerUsesUSDST && IsUSDST(utc))
+      return 1;
+   if(InpServerUsesEUDST && IsEUDST(utc))
+      return 1;
+   return 0;
+  }
+
 int ServerOffsetForUTC(const datetime utc)
   {
-   return g_gmtWinter + ((InpServerUsesUSDST && IsUSDST(utc)) ? 1 : 0);
+   return g_gmtWinter + DSTShift(utc);
   }
 
 datetime ServerToUTC(const datetime srv)
@@ -233,7 +254,7 @@ void DetectGMTOffset()
    if(gmt <= 0 || srv <= 0)
       return;
    int off = (int)MathRound((double)(srv - gmt) / 3600.0);
-   int winter = off - ((InpServerUsesUSDST && IsUSDST(gmt)) ? 1 : 0);
+   int winter = off - DSTShift(gmt);
    if(winter != InpServerGMTOffsetWinter)
       PrintFormat("SlowStrat: detected server GMT offset %+d (winter %+d) differs from input %+d - using detected value.",
                   off, winter, InpServerGMTOffsetWinter);
@@ -542,11 +563,32 @@ bool SymbolBusyNetting(const string sym)
 
 string GVKey(const ulong ticket) { return g_prefix + "R_" + (string)ticket; }
 
+// any position on `sym` (this EA or manual) in the other direction, opened less than 24 hours ago
+bool HasYoungOpposite(const string sym, const int dir)
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong tk = PositionGetTicket(i);
+      if(tk == 0 || PositionGetString(POSITION_SYMBOL) != sym)
+         continue;
+      long type = PositionGetInteger(POSITION_TYPE);
+      int pdir = (type == POSITION_TYPE_BUY) ? 1 : -1;
+      if(pdir != dir && TimeCurrent() - (datetime)PositionGetInteger(POSITION_TIME) < 24 * 3600)
+         return true;
+     }
+   return false;
+  }
+
 bool OpenPosition(const int mod, const string sym, const int dir, const double slDist, const double tpDist,
                   const double riskPct, const double commission, const string tag)
   {
    if(slDist <= 0 || riskPct <= 0)
       return false;
+   if(InpNoOppositePositions && HasYoungOpposite(sym, dir))
+     {
+      PrintFormat("SlowStrat %s: skip %s - an opposite position on this symbol is less than 24h old", tag, sym);
+      return false;
+     }
    double price = (dir > 0) ? SymbolInfoDouble(sym, SYMBOL_ASK) : SymbolInfoDouble(sym, SYMBOL_BID);
    if(price <= 0)
       return false;
@@ -1277,8 +1319,8 @@ int OnInit()
 
    PrintFormat("SlowStrat init: gold=%s indices=%d preset=%s risk GT %.2f%% GA %.2f%% ID %.2f%% x%.2f, server GMT winter %+d%s, %s account",
                g_gold, g_nIdx, EnumToString(InpPreset), g_riskGT, g_riskGA, g_riskID, InpRiskMultiplier, g_gmtWinter,
-               InpServerUsesUSDST ? " (+US DST)" : "", g_hedging ? "hedging" : "netting");
-   if(!g_isTester && InpServerUsesUSDST && (g_gmtWinter != 2))
+               InpServerUsesUSDST ? " (+US DST)" : (InpServerUsesEUDST ? " (+EU DST)" : ""), g_hedging ? "hedging" : "netting");
+   if(!g_isTester && !(InpServerUsesUSDST && g_gmtWinter == 2))
       Print("SlowStrat: NOTE - the strategy was researched on New-York-close servers (GMT+2 winter / GMT+3 summer). "
             "H4 and D1 bars on other server time zones differ; see README.");
    EventSetTimer(2);
